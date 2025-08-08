@@ -13,7 +13,7 @@ from langchain_core.messages import SystemMessage, HumanMessage
 from langchain_openai import ChatOpenAI
 from utils.tools.message_logger import MessageHistoryLoggerTool
 from utils.tools.trip_inputs import UserDataLoggerTool
-from utils.tools.suggestions_logger import SuggestionDataLoggerTool
+
 from config import Config as config
 from utils.prompts import CURATOR_SYSTEM_PROMPT
 
@@ -47,29 +47,15 @@ class QueryRouter:
         conversation_id = state['message_to_curator']['conversation_id']
         
         # Initialize or get curator_message_history
+        ## Need to update this tool based on MongoDB setup
         curator_message_history = await MessageHistoryLoggerTool()._arun(
             action="retrieve", 
             conversation_id=state['message_to_curator']['conversation_id'], 
             agent_type="curator"
         )
+        ##############################################################################################
+        ##############################################################################################
         
-        if not curator_message_history:
-            curator_message_history.append(SystemMessage(content=self.system_prompt))
-        
-        # Format suggestions for display
-        suggestions = await SuggestionDataLoggerTool()._arun(
-            action="retrieve", 
-            key=conversation_id
-        )
-        
-        if suggestions == 'No suggestions found for the specified conversation ID':
-            filtered_suggestions = []
-        else:
-            suggestions = json.loads(suggestions)
-            filtered_suggestions = [
-                {'content': s['content'], 'status': s['status']} 
-                for s in suggestions if s['status'] == 'to_be_approved'
-            ]
         
         # Try to fetch existing user inputs using Data Logger
         user_inputs = {}
@@ -96,23 +82,19 @@ class QueryRouter:
                 Conversation ID:
                 {conversation_id}
 
-                Current Suggestions that are not approved:
-                {json.dumps(filtered_suggestions, indent=2)}
-
-                User Preferences provided so far for planning a trip:
+                Persona provided by user to about himself and his agricultural land:
                 {json.dumps(user_inputs, indent=2)}
 
-                Mandatory User Preferences still pending for planning a trip:
-                {list(["source", "destination", "start_date", "end_date"] - user_inputs.keys())}
-
                 Before writing your final response, analyse the latest query and the current scenario (provided above) carefully and then answer the following questions only
-                1. Has the user explicitly mentioned a specific destination (place/city) of interest in this query or earlier in the conversation? (yes/no)
-                2. In their latest query, does the user seem to be asking (directly/indirectly) for suggestions wrt that specific destination of interest? Or are they making general enquiries about travel ideas i.e. places worth visiting, romantic spot ideas, or weather/climate at a place // Only if former, then while writing the final response, use the `GoogleSearchTool` to curate suggestions.
-                3. Has the user completely accepted the previously curated suggestion wrt that specific destination of interest? (yes/no/NA) // If yes, then while writing the final answer you should use `SuggestionDataLoggerTool` to update status as 'approved'
-                4. If not, have they completely rejected it or are they are somewhat okay with it even though its not perfect for them? Also have they asked for modifying a small part of the suggestions // If somewhat okay, then you should use `SuggestionDataLoggerTool` to update status as 'approved' and update content as required. If completely rejected, you should use it to update status as 'rejected'
-                5. After having accepted, has the user also asked (directly/indirectly) for fresh suggestions? (yes/no/NA). // If yes, make a separate call to `GoogleSearchTool` to get fresh suggestions
-                6. Is the user asking for a detailed plan? // If yes, then are there any approved suggestions? If no, then you should revert back to the user asking if they want new suggestions (if they have previously rejected them), or if they want to proceed with the plan generation based on the previously curated suggestions. 
-
+                1. Has the user explicitly mentioned a specific place (place/city) of his farmland in this query or earlier in the conversation? (yes/no)
+                2. In their latest query, does the user seem to be asking (directly/indirectly) for suggestions or advice related to a specific place, farm, or crop of interest? Or are they making general enquiries about agricultural practices, crop selection, soil health, pest management, or weather/climate conditions for farming? // Only if the former, then while writing the final response, use the `GoogleSearchTool` to curate suggestions or provide relevant information.
+                3. If the user has mentioned any specific crops, soil types, weather conditions, or farming techniques, highlight these in your analysis.
+                4. Check if the user is seeking advice on government schemes, subsidies, or agricultural policies relevant to their region.
+                5. Consider if the user is asking about pest/disease management, irrigation methods, or sustainable/organic farming practices.
+                6. If the user has provided or updated information about their land size, crop cycle, or resource availability (e.g., water, equipment), note these changes.
+                7. If the user is requesting market price information, supply chain advice, or post-harvest management tips, mention this.
+                8. If the user is interested in connecting with local experts, agricultural extension services, or farmer communities, include this in your response.
+                
                 Note: Check that if there been any change in the user inputs, if you notice any changes, that means, the user has modified that particular input, and you need to work on that, and provide a clarification message that you have noticed the change as well.
 
                 Give only the response to the above questions, in a bullet point format.
@@ -133,7 +115,7 @@ class QueryRouter:
             HumanMessage(
                 content=f"""
                 Now based on the above context as well as your response to the questions, write your final response in the format below:
-                {{"agent_message": "A well articulated message along the guidelines suggested", "CTAs": "A comma-separated list (i.e. within square brackets) of prescribed CTAs as per instructions. If plan_gen_flag is yes then this should always be []", "tool_calls": "required tool calls", "plan_gen_flag": "Should be yes only when the user has provided all mandatory inputs (i.e. starting location, destination, travel start and end dates) and approved suggestions and has asked for detailed plan", "conversation_caption": "A short caption, less than 10 words, for the conversation. If this is a new conversation, create a new caption. If continuing the same topic, use the previous caption."}}
+                {{"agent_message": "A well articulated message along the guidelines suggested", "CTAs": "A comma-separated list (i.e. within square brackets) of prescribed CTAs as per instructions.", "tool_calls": "required tool calls", "conversation_caption": "A short caption, less than 10 words, for the conversation. If this is a new conversation, create a new caption. If continuing the same topic, use the previous caption."}}
                 
                 Note: 
                 1. Output the CTAs as a proper list like [...], not '[...]'
@@ -141,13 +123,22 @@ class QueryRouter:
                 3. Always include the conversation_caption field in your response
                 4. If you don't have a previous caption, create a new one based on the current conversation topic
 
-                You have `GoogleSearchTool`, `UserDataLoggerTool` and `SuggestionDataLoggerTool` at your disposal.
+                You have `GoogleSearchTool`, `UserDataLoggerTool`, `WeatherAnalysisTool`, `SoilInfoTool`, `PestDetectionTool` and `RetrievalTool` at your disposal.
 
                 Note:
-                -- In the latest user query, take particular note of any newly provided (or updated) User Preferences regarding planning a trip. And use the `UserDataLoggerTool` to store/update these inputs accordingly.
-                -- Don't forget to use the `SuggestionDataLoggerTool` to approve or reject any suggestions that are not approved, especially before curating new ones. Deduce the appropriate action to the best of your ability from the latest user query
-                -- Use the `GoogleSearchTool` to curate suggestions/information only if the user is enquiring for details (or additional details) about a specific destination that they are interested in.
-                -- For general enquiries about travel worthy places (e.g. some romantic locations in India, places to travel with friends, weekend getway spots, etc) do not use `GoogleSearchTool` tool. Rather in the interest of time, answer directly to the best of your knowledge.
+                -- In the latest user query, take particular note of any newly provided (or updated) User Persona information regarding their crops, farmland, or agricultural practices. Use the `UserDataLoggerTool` to store or update these agricultural inputs as needed.
+
+                -- Use the `GoogleSearchTool` to curate suggestions or provide information only if the user is enquiring about specific agricultural locations, crops, or farming techniques that require external information or up-to-date resources.
+
+                -- For general enquiries about agricultural best practices, crop selection, soil health, pest management, weather conditions, or government schemes, do not use the `GoogleSearchTool`. Instead, answer directly to the best of your knowledge or use other relevant tools as appropriate.
+
+                -- Tool Descriptions:
+                   - `UserDataLoggerTool`: Log and manage user agricultural inputs, such as crop details, farmland information, and user preferences. Use this tool to store, retrieve, or update user data.
+                   - `GoogleSearchTool`: Search the web for up-to-date agricultural information, news, or resources relevant to specific queries about crops, locations, or farming techniques.
+                   - `WeatherAnalysisTool`: Retrieve current and forecasted weather data for a given location to assist with agricultural planning and decision-making.
+                   - `SoilInfoTool`: Provide information about soil types, soil health, and recommendations for soil management based on user location or input.
+                   - `PestDetectionTool`: Assist in identifying pests or diseases affecting crops and suggest possible management or treatment options.
+                   - `RetrievalTool`: Retrieve previously stored information or documents relevant to the user's agricultural queries or history.
                 """,
                 name="user"
             )
@@ -159,8 +150,8 @@ class QueryRouter:
         # Add router response to message history
         curator_message_history.append(router_response)
 
-        state["curator_message_history"] = curator_message_history
-        state["curated_suggestions"] = filtered_suggestions
+        state["message_history"] = curator_message_history
+
         
         print(f"CuratorNode: Query Router Completed in {time.time() - start_time:.2f} seconds")
         

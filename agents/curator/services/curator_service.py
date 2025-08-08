@@ -29,7 +29,6 @@ import concurrent.futures
 from curator.utils.query_router import QueryRouter
 from curator.utils.task_manager import TaskManager
 from curator.utils.response_formatter import ResponseFormatter
-from curator.utils.gather_elements import ElementDetailGatherer
 from curator.utils.tools.search_tool import GoogleSearchTool
 from curator.utils.tools.image_search_tool import GoogleImageSearchTool
 from curator.utils.tools.message_logger import MessageHistoryLoggerTool
@@ -39,23 +38,17 @@ from curator.utils.prompts import CURATOR_SYSTEM_PROMPT
 
 nest_asyncio.apply()
 
-class CuratorResponse(TypedDict):
-    user_inputs: Dict
-    curated_suggestions: List[Dict]
-    agent_message: str
-    CTAs: List[str]
-    plan_gen_flag: str
-    conversation_caption: str
 
+# maintaining response in state itself
 class AgentState(TypedDict):
-    message_to_curator: Dict
-    message_from_curator: Dict
-    curator_message_history: List[BaseMessage]
-    planner_message_history: List[BaseMessage]
-    task_history: List[Dict[str, Any]]
-    conversation_summary: List[Dict[str, Any]]
-    curated_suggestions: List[Dict]
-    itinerary: str
+    message_to_curator: Dict[str, Any]
+    response: Dict[str, Any]
+    lat: float
+    long: float
+    place: str
+    message_history: List[BaseMessage]
+    task_history: List
+    task_results: List
 
 class CuratorNode:
     """
@@ -80,7 +73,6 @@ class CuratorNode:
         self.query_router = QueryRouter(model, system_prompt)
         self.task_manager = TaskManager(tools)
         self.response_formatter = ResponseFormatter(model, tools)
-        self.element_detail_gatherer = ElementDetailGatherer(model)
     
     async def __call__(self, query: str, conversation_id: str, inputs: Dict[str, Any]) -> Dict:
         """
@@ -101,14 +93,21 @@ class CuratorNode:
         state["message_to_curator"] = {
             "query": query,
             "conversation_id": conversation_id,
-            "inputs": inputs
         }
+        state["lat"] = inputs["latitude"]
+        state["long"] = inputs["longitude"]
+        state["place"] = inputs["place"]
 
+        state["message_history"] = inputs["message_history"]
+
+
+        ## didn't understand #########################################
         user_data_logger_tool = UserDataLoggerTool()
         initial_inputs = await user_data_logger_tool._arun(
             action="retrieve",
             key=conversation_id
         )
+
 
         if initial_inputs:
             initial_inputs = json.loads(initial_inputs)
@@ -134,22 +133,14 @@ class CuratorNode:
                     key=conversation_id,
                     data=initial_inputs
                 )
-
-        # Initialize result dictionary
-        result: CuratorResponse = {
-            "user_inputs": {},
-            "suggestions": {},
-            "agent_message": "",
-            "CTAs": [],
-            "plan_gen_flag": "no",
-            "conversation_caption": ""
-        }
+        ##################################################################################
+        
 
         # Decide an appropriate next action (tool calls or Response)
         state = await self.query_router.process_state(state)
 
         # Check if router generated tool calls
-        curator_message_history = state.get("curator_message_history", [])
+        curator_message_history = state.get("message_history", [])
 
         if curator_message_history:
             last_ai_message = next((msg for msg in reversed(curator_message_history)
@@ -177,11 +168,10 @@ class CuratorNode:
                     user_inputs = json.loads(user_inputs_result)
                     user_inputs = {k: v for k, v in user_inputs.items() if k not in ["timestamp", "created_at", "updated_at"]}
 
+                    result = {}
                     result["user_inputs"] = user_inputs
-                    result["suggestions"] = {}
                     result["agent_message"] = last_ai_message.get("agent_message", "")
                     result["CTAs"] = last_ai_message.get("CTAs", [])
-                    result["plan_gen_flag"] = last_ai_message.get("plan_gen_flag", "no")
                     result["conversation_caption"] = last_ai_message.get("conversation_caption", "")
 
                     await MessageHistoryLoggerTool()._arun(action="store", conversation_id=conversation_id, messages=state["curator_message_history"], agent_type="curator")
@@ -190,50 +180,21 @@ class CuratorNode:
                     # Format the results
                     state = await self.response_formatter.process_state(state)
 
-                    # Extract suggestions from state for the result
-                    suggestions = state.get("curated_suggestions", [])
-                    if len(suggestions)>0:
-                      result["suggestions"] = [{key: value for key, value in suggestion.items() if key in ["suggestion_id", "content", "status", "reference_urls", "timestamp", "updated_at"]} for suggestion in suggestions]
-                    else:
-                      result["suggestions"] = {}
-
-                    # Keep only latest suggestion
-                    if result["suggestions"]:
-                      for suggestion in result["suggestions"]:
-                        if "timestamp" in suggestion and isinstance(suggestion["timestamp"], str):
-                          try:
-                            # Attempt to parse with the given format
-                            suggestion["timestamp"] = datetime.datetime.strptime(suggestion["timestamp"], '%Y-%m-%dT%H:%M:%S.%f')
-                          except ValueError:
-                            try:
-                              # Attempt to parse without milliseconds
-                              suggestion["timestamp"] = datetime.datetime.strptime(suggestion["timestamp"], '%Y-%m-%dT%H:%M:%S')
-                            except ValueError:
-                              # Handle cases where timestamp format might be different.
-                              print(f"Warning: Could not parse timestamp: {suggestion['timestamp']}")
-                              suggestion["timestamp"] = None  # Or a default datetime
-
-
-                      # Find the suggestion with the maximum timestamp (latest suggestion)
-                      latest_suggestion = max(result["suggestions"], key=lambda x: x["timestamp"] or datetime.datetime.min)
-
-                      # Update result["suggestions"] to keep only the suggestion with the maximum timestamp
-                      result["suggestions"] = latest_suggestion
 
                     # Extract user inputs from state for the result
-                    result["user_inputs"] = state.get("message_from_curator", {}).get("user_inputs", {})
+                    result["user_inputs"] = state.get("message_from_curator", {}).get("query", {})
 
                     # Extract other info from state for the result
                     raw_summary = state.get("message_from_curator", {}).get("summary", "")
                     summary = json.loads(raw_summary)
                     result["agent_message"] = summary["agent_message"]
                     result["CTAs"] = summary["CTAs"]
-                    result["plan_gen_flag"] = state.get("plan_gen_flag", "no")
                     result["conversation_caption"] = summary["conversation_caption"]
 
                     await MessageHistoryLoggerTool()._arun(action="store", conversation_id=conversation_id, messages=state["curator_message_history"], agent_type="curator")
 
                     # Start background element processing
+                    ## Not sure what is happening @Rwik please look
                     asyncio.create_task(self._process_element_details(state, conversation_id))
 
         print(f"CuratorNode: Execution Completed in {time.time() - start_time:.2f} seconds")

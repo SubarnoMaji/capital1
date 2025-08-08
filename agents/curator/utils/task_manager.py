@@ -20,7 +20,7 @@ class TaskManager:
             tools: List of tool objects that can be executed
         """
         self.tools = tools
-        self.tool_instances = {tool.name: tool for tool in tools}
+        self.tool_instances = {getattr(tool, 'name', tool.__class__.__name__): tool for tool in tools}
         
     async def process_state(self, state: Dict[str, Any]) -> Dict[str, Any]:
         """
@@ -36,7 +36,7 @@ class TaskManager:
         start_time = time.time()
         
         # Extract message history from state
-        curator_message_history = state.get("curator_message_history", [])
+        curator_message_history = state.get("message_history", [])
         if not curator_message_history:
             return state
             
@@ -79,7 +79,7 @@ class TaskManager:
         state["task_results"] = results
         
         # Add tool message responses to the message history
-        state["curator_message_history"] = self._update_message_history(
+        state["message_history"] = self._update_message_history(
             curator_message_history, 
             action_plan, 
             updated_task_history
