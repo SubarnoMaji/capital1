@@ -220,8 +220,7 @@ if __name__ == "__main__":
                 except Exception as e:
                     logger.error(f"Error processing {filename}: {e}")
    
-        logger.info("Running example query: 'what he did in Morgan Stanley?'")
-        results = store.query("what he did in Morgan Stanley?", 3)
+        results = store.query("what did he do in Morgan Stanley?", 3)
         logger.info(f"Query results: {results}")
         print(results)
     except Exception as e:
