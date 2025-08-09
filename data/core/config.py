@@ -1,6 +1,3 @@
 APP_ENV = "development"
-TRIP_INPUTS = "trip_inputs"
-CURATED_SUGGESTIONS = "curated_suggestions"
-CONVERSATION_HISTORY = "conversation_history"
-CURATOR_MESSAGE_HISTORY = "curator_message_history"
-PLANNER_MESSAGE_HISTORY = "planner_message_history"
+MESSAGE = "messages"
+USER_INPUTS = "user_inputs"

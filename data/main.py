@@ -1,13 +1,7 @@
 from pymongo import MongoClient
 from datetime import datetime
-import nest_asyncio
-import threading
 import uvicorn
-import requests
-import json
-import signal
 import sys
-import atexit
 from typing import Any
 import os
 from dotenv import load_dotenv, find_dotenv
