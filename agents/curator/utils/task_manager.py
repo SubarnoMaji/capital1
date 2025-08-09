@@ -3,7 +3,7 @@ import json
 import time
 import uuid
 from typing import Dict, List, Tuple, Any, Optional
-from langchain.schema import AIMessage
+from langchain_core.messages import ToolMessage, AIMessage
 
 class TaskManager:
     """
@@ -11,7 +11,6 @@ class TaskManager:
     It processes tool calls from router responses and manages the execution
     of these tools with proper concurrency control.
     """
-    
     def __init__(self, tools: List[Any]):
         """
         Initialize the TaskManager with a list of available tools.
@@ -36,12 +35,12 @@ class TaskManager:
         start_time = time.time()
         
         # Extract message history from state
-        curator_message_history = state.get("message_history", [])
-        if not curator_message_history:
+        message_history = state.get("message_history", [])
+        if not message_history:
             return state
             
         # Find the last AI message
-        last_ai_message = next((msg for msg in reversed(curator_message_history)
+        last_ai_message = next((msg for msg in reversed(message_history)
                             if isinstance(msg, AIMessage)), None)
         
         if not last_ai_message:
@@ -80,7 +79,7 @@ class TaskManager:
         
         # Add tool message responses to the message history
         state["message_history"] = self._update_message_history(
-            curator_message_history, 
+            message_history, 
             action_plan, 
             updated_task_history
         )
@@ -162,11 +161,11 @@ class TaskManager:
                     break
                     
             if tool_result:
-                # Add AIMessage to message history
+                # Add ToolMessage to message history
                 updated_history.append(
                     AIMessage(
-                        content=f"Tool call executed: \n {str(tool_result) if not isinstance(tool_result, str) else tool_result}",
-                        tool_call_id=tool_id,
+                        content=str(tool_result) if not isinstance(tool_result, str) else tool_result,
+                        # tool_call_id=tool_id,
                         name=tool_name
                     )
                 )

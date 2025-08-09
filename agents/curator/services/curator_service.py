@@ -1,62 +1,48 @@
 import json
 import time
 import asyncio
-from enum import Enum
-from typing import TypedDict, List, Dict, Any, Literal, Tuple
+from typing import TypedDict, List, Dict, Any, Literal, Tuple, Optional
 import nest_asyncio
-import base64
-import datetime
-
 import os
 import sys
 
 # Add the parent directory (project root) to the Python path
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from langchain_core.messages import SystemMessage, HumanMessage, AIMessage, BaseMessage
-from langchain.memory import ConversationBufferMemory
-from langchain_core.prompts import ChatPromptTemplate
+from langchain_core.messages import SystemMessage, HumanMessage, AIMessage, BaseMessage, ToolMessage
 from langchain_openai import ChatOpenAI
-from langgraph.prebuilt import create_react_agent
-from langgraph.graph import MessagesState, StateGraph, END
-from langgraph.checkpoint.memory import MemorySaver
-from langgraph.errors import GraphRecursionError
-from langgraph.types import Command
+from langgraph.graph import StateGraph, END
 
 from concurrent.futures import ThreadPoolExecutor
 import concurrent.futures
 
-from curator.utils.query_router import QueryRouter
-from curator.utils.task_manager import TaskManager
-from curator.utils.response_formatter import ResponseFormatter
-from curator.utils.tools.search_tool import GoogleSearchTool
-from curator.utils.tools.image_search_tool import GoogleImageSearchTool
-from curator.utils.tools.message_logger import MessageHistoryLoggerTool
-from curator.utils.tools.trip_inputs import UserDataLoggerTool
-from curator.utils.tools.suggestions_logger import SuggestionDataLoggerTool
-from curator.utils.prompts import CURATOR_SYSTEM_PROMPT
+from utils.query_router import QueryRouter
+from utils.task_manager import TaskManager
+from utils.response_formatter import ResponseFormatter
+from utils.tools.search_tool import WebSearchTool
+from utils.tools.user_inputs import UserDataLoggerTool
+from utils.prompts import SYSTEM_PROMPT
+from utils.tools.message_logger import MessageHistoryLoggerTool
 
 nest_asyncio.apply()
 
-
-# maintaining response in state itself
-class AgentState(TypedDict):
-    message_to_curator: Dict[str, Any]
-    response: Dict[str, Any]
-    lat: float
-    long: float
-    place: str
-    message_history: List[BaseMessage]
-    task_history: List
-    task_results: List
+# Enhanced state structure for LangGraph
+class CuratorState(TypedDict):
+    messages: List[BaseMessage]  # LangGraph messages state
+    conversation_id: str
+    user_inputs: Dict[str, Any]
+    task_results: Optional[Dict[str, Any]]
+    response: Optional[Dict[str, Any]]
+    metadata: Dict[str, Any]  # Additional metadata like lat, long, place, etc.
+    query: str  # Current user query passed explicitly
 
 class CuratorNode:
     """
     CuratorNode orchestrates the query routing, task management, and response formatting
-    components to process user queries and generate curated suggestions.
+    components using LangGraph for better state management and workflow control.
     """
     
-    def __init__(self, model, tools, system_prompt = CURATOR_SYSTEM_PROMPT):
+    def __init__(self, model, tools, system_prompt=SYSTEM_PROMPT):
         """
         Initialize the CuratorNode with models, tools, and system prompt.
         
@@ -73,169 +59,367 @@ class CuratorNode:
         self.query_router = QueryRouter(model, system_prompt)
         self.task_manager = TaskManager(tools)
         self.response_formatter = ResponseFormatter(model, tools)
+        self.message_logger = MessageHistoryLoggerTool()
+        
+        # Create LangGraph workflow
+        self.workflow = self._create_workflow()
+    
+    def _create_workflow(self) -> StateGraph:
+        """
+        Create the LangGraph workflow for the curator.
+        
+        Returns:
+            Configured StateGraph for the curator workflow
+        """
+        # Create the state graph
+        workflow = StateGraph(CuratorState)
+        
+        # Add nodes
+        workflow.add_node("query_router", self._query_router_node)
+        workflow.add_node("task_manager", self._task_manager_node)
+        workflow.add_node("response_formatter", self._response_formatter_node)
+        workflow.add_node("final_response", self._final_response_node)
+        
+        # Set entry point
+        workflow.set_entry_point("query_router")
+        
+        # Add conditional edges
+        workflow.add_conditional_edges(
+            "query_router",
+            self._should_execute_tasks,
+            {
+                "execute_tasks": "task_manager",
+                "skip_tasks": "final_response"
+            }
+        )
+        
+        workflow.add_conditional_edges(
+            "task_manager",
+            self._should_format_response,
+            {
+                "format_response": "response_formatter",
+                "skip_format": "final_response"
+            }
+        )
+        
+        workflow.add_edge("response_formatter", "final_response")
+        workflow.add_edge("final_response", END)
+        
+        return workflow.compile()
+    
+    async def _query_router_node(self, state: CuratorState) -> CuratorState:
+        """
+        Query router node that analyzes the query and determines next steps.
+        
+        Args:
+            state: Current state
+            
+        Returns:
+            Updated state with router analysis
+        """
+        print("CuratorNode: Starting Query Router")
+        start_time = time.time()
+        
+        # Use query from state; fallback to extracting from messages
+        query = state.get("query") or self._extract_latest_query(state["messages"])
+        
+        # Create internal state for router
+        internal_state = {
+            "message_to_curator": {
+                "query": query,
+                "conversation_id": state["conversation_id"]
+            },
+            "message_history": state["messages"],
+            "user_inputs": state["user_inputs"]
+        }
+        
+        # Process with router
+        updated_state = await self.query_router.process_state(internal_state)
+        
+        # Update the LangGraph state
+        state["messages"] = updated_state.get("message_history", state["messages"])
+        
+        print(f"CuratorNode: Query Router Completed in {time.time() - start_time:.2f} seconds")
+        return state
+    
+    async def _task_manager_node(self, state: CuratorState) -> CuratorState:
+        """
+        Task manager node that executes tool calls.
+        
+        Args:
+            state: Current state
+            
+        Returns:
+            Updated state with task results
+        """
+        print("CuratorNode: Starting Task Manager")
+        start_time = time.time()
+        
+        # Create internal state for task manager
+        internal_state = {
+            "message_history": state["messages"],
+            "task_results": state.get("task_results", {})
+        }
+        
+        # Process with task manager
+        updated_state = await self.task_manager.process_state(internal_state)
+        
+        # Update the LangGraph state
+        state["messages"] = updated_state.get("message_history", state["messages"])
+        state["task_results"] = updated_state.get("task_results", {})
+        
+        # Persist message history after task execution
+        try:
+            await self.message_logger._arun(
+                action="store",
+                conversation_id=state["conversation_id"],
+                agent_type="curator",
+                messages=state["messages"],
+            )
+        except Exception as e:
+            print(f"Warning: failed to store messages after task manager: {e}")
+        
+        print(f"CuratorNode: Task Manager Completed in {time.time() - start_time:.2f} seconds")
+        return state
+    
+    async def _response_formatter_node(self, state: CuratorState) -> CuratorState:
+        """
+        Response formatter node that formats tool results into agricultural advice.
+        
+        Args:
+            state: Current state
+            
+        Returns:
+            Updated state with formatted agricultural advice
+        """
+        print("CuratorNode: Starting Response Formatter")
+        start_time = time.time()
+        
+        # Create internal state for response formatter
+        internal_state = {
+            "message_history": state["messages"],
+            "task_results": state["task_results"],
+            "message_to_curator": {
+                "conversation_id": state["conversation_id"],
+                "query": state.get("query", "")
+            }
+        }
+        
+        # Process with response formatter
+        updated_state = await self.response_formatter.process_state(internal_state)
+        
+        # Update the LangGraph state
+        state["messages"] = updated_state.get("message_history", state["messages"])
+        state["response"] = updated_state.get("message_from_curator", {})
+        
+        # Persist message history after formatting
+        try:
+            await self.message_logger._arun(
+                action="store",
+                conversation_id=state["conversation_id"],
+                agent_type="curator",
+                messages=state["messages"],
+            )
+        except Exception as e:
+            print(f"Warning: failed to store messages after response formatter: {e}")
+        
+        # Upsert user inputs snapshot each run
+        try:
+            await UserDataLoggerTool()._arun(
+                action="store",
+                key=state["conversation_id"],
+                data=state.get("user_inputs", {}),
+            )
+        except Exception as e:
+            print(f"Warning: failed to store user inputs: {e}")
+        
+        print(f"CuratorNode: Response Formatter Completed in {time.time() - start_time:.2f} seconds")
+        return state
+    
+    async def _final_response_node(self, state: CuratorState) -> CuratorState:
+        """
+        Final response node that prepares the final response.
+        
+        Args:
+            state: Current state
+            
+        Returns:
+            Updated state with final response
+        """
+        print("CuratorNode: Preparing Final Response")
+        
+        # Extract the last AI message to get the response
+        last_ai_message = self._extract_last_ai_message(state["messages"])
+        
+        if last_ai_message:
+            try:
+                # Parse the JSON response
+                response_content = last_ai_message.content.replace('```json', '').replace('```', '').strip()
+                parsed_response = json.loads(response_content)
+                
+                # Prepare final response
+                state["response"] = {
+                    "user_inputs": state["user_inputs"],
+                    "agent_message": parsed_response.get("agent_message", ""),
+                    "CTAs": parsed_response.get("CTAs", []),
+                    "conversation_caption": parsed_response.get("conversation_caption", "")
+                }
+            except (json.JSONDecodeError, AttributeError):
+                # Fallback if parsing fails
+                state["response"] = {
+                    "user_inputs": state["user_inputs"],
+                    "agent_message": last_ai_message.content,
+                    "CTAs": [],
+                    "conversation_caption": ""
+                }
+        
+        return state
+    
+    def _should_execute_tasks(self, state: CuratorState) -> str:
+        """
+        Determine if tasks should be executed based on the router response.
+        
+        Args:
+            state: Current state
+            
+        Returns:
+            Decision string for conditional edge
+        """
+        last_ai_message = self._extract_last_ai_message(state["messages"])
+        
+        if not last_ai_message:
+            return "skip_tasks"
+        
+        try:
+            response_content = last_ai_message.content.replace('```json', '').replace('```', '').strip()
+            parsed_response = json.loads(response_content)
+            
+            # Check if there are tool calls that need execution
+            tool_calls = parsed_response.get("tool_calls", [])
+            
+            # Filter out simple tools that don't need task manager
+            simple_tools = {"UserDataLoggerTool", "MessageHistoryLoggerTool"}
+            
+            needs_task_manager = any(
+                tool_call.get("name") not in simple_tools 
+                for tool_call in tool_calls
+            )
+            
+            return "execute_tasks" if needs_task_manager else "skip_tasks"
+            
+        except (json.JSONDecodeError, AttributeError):
+            return "skip_tasks"
+    
+    def _should_format_response(self, state: CuratorState) -> str:
+        """
+        Determine if response should be formatted based on task results.
+        
+        Args:
+            state: Current state
+            
+        Returns:
+            Decision string for conditional edge
+        """
+        # Check if we have task results that need formatting
+        task_results = state.get("task_results", {})
+        
+        # If we have search results or other complex results, format them
+        if task_results and any(key != "errors" for key in task_results.keys()):
+            return "format_response"
+        
+        return "skip_format"
+    
+    def _extract_latest_query(self, messages: List[BaseMessage]) -> str:
+        """
+        Extract the latest user query from messages.
+        
+        Args:
+            messages: List of messages
+            
+        Returns:
+            Latest user query
+        """
+        for message in reversed(messages):
+            if isinstance(message, HumanMessage):
+                return message.content
+        return ""
+    
+    def _extract_last_ai_message(self, messages: List[BaseMessage]) -> Optional[AIMessage]:
+        """
+        Extract the last AI message from messages.
+        
+        Args:
+            messages: List of messages
+            
+        Returns:
+            Last AI message or None
+        """
+        for message in reversed(messages):
+            if isinstance(message, AIMessage):
+                return message
+        return None
     
     async def __call__(self, query: str, conversation_id: str, inputs: Dict[str, Any]) -> Dict:
         """
-        Main execution flow for the CuratorNode
+        Main execution flow for the CuratorNode using LangGraph.
 
         Args:
             query: User's query string
             conversation_id: Unique conversation identifier
+            inputs: User inputs and metadata
 
         Returns:
-            Dictionary containing user_inputs, suggestions, and summary
+            Dictionary containing user_inputs, agent_message, CTAs, and conversation_caption
         """
         print("CuratorNode: Starting Execution")
         start_time = time.time()
 
-        # Create the agent state internally
-        state = AgentState()
-        state["message_to_curator"] = {
-            "query": query,
-            "conversation_id": conversation_id,
-        }
-        state["lat"] = inputs["latitude"]
-        state["long"] = inputs["longitude"]
-        state["place"] = inputs["place"]
-
-        state["message_history"] = inputs["message_history"]
-
-
-        ## didn't understand #########################################
-        user_data_logger_tool = UserDataLoggerTool()
-        initial_inputs = await user_data_logger_tool._arun(
-            action="retrieve",
-            key=conversation_id
+        # Initialize state
+        initial_state = CuratorState(
+            messages=[
+                SystemMessage(content=self.system_prompt),
+                HumanMessage(content=query)
+            ],
+            conversation_id=conversation_id,
+            user_inputs=inputs,
+            task_results=None,
+            response=None,
+            metadata={
+                "lat": inputs.get("latitude"),
+                "long": inputs.get("longitude"),
+                "place": inputs.get("place")
+            },
+            query=query,
         )
 
-
-        if initial_inputs:
-            initial_inputs = json.loads(initial_inputs)
-            # Compare and update inputs with any new values from the user
-            modified = False
-            for key, value in inputs.items():
-                if value and (key not in initial_inputs or initial_inputs[key] != value):
-                    initial_inputs[key] = value
-                    modified = True
-                    print(f"CuratorNode: Updated {key} from {initial_inputs.get(key, 'None')} to {value}")
-                    # Log the update in the history
-                    await user_data_logger_tool._arun(
-                        action="update",
-                        key=conversation_id,
-                        data={key: value}
-                    )
-
-            if modified:
-                print(f"CuratorNode: Modified Inputs: {initial_inputs}")
-                # Store the complete updated inputs
-                await user_data_logger_tool._arun(
-                    action="store",
-                    key=conversation_id,
-                    data=initial_inputs
-                )
-        ##################################################################################
-        
-
-        # Decide an appropriate next action (tool calls or Response)
-        state = await self.query_router.process_state(state)
-
-        # Check if router generated tool calls
-        curator_message_history = state.get("message_history", [])
-
-        if curator_message_history:
-            last_ai_message = next((msg for msg in reversed(curator_message_history)
-                                if isinstance(msg, AIMessage)), None)
-            last_ai_message = json.loads(last_ai_message.content.replace('```json','').replace('```','').strip())
-
-            # If we have tool calls, execute them and format the results
-            if last_ai_message and last_ai_message.get("tool_calls", None) is not None:
-                # Execute tools
-                state = await self.task_manager.process_state(state)
-
-                # Only proceed if we have task results and we have a GoogleSearchTool call
-                if state.get('task_results', None) is None or not any(tool_call.get("name") == "GoogleSearchTool" for tool_call in last_ai_message.get("tool_calls", [])):
-                    print("No GoogleSearchTool results found, directly returning")
-
-                    # Create a tool call for retrieving user inputs
-                    user_data_logger_tool = UserDataLoggerTool()
-
-                    # Execute the tool call to retrieve user inputs
-                    user_inputs_result = await user_data_logger_tool._arun(
-                        action="retrieve",
-                        key=conversation_id
-                    )
-
-                    user_inputs = json.loads(user_inputs_result)
-                    user_inputs = {k: v for k, v in user_inputs.items() if k not in ["timestamp", "created_at", "updated_at"]}
-
-                    result = {}
-                    result["user_inputs"] = user_inputs
-                    result["agent_message"] = last_ai_message.get("agent_message", "")
-                    result["CTAs"] = last_ai_message.get("CTAs", [])
-                    result["conversation_caption"] = last_ai_message.get("conversation_caption", "")
-
-                    await MessageHistoryLoggerTool()._arun(action="store", conversation_id=conversation_id, messages=state["curator_message_history"], agent_type="curator")
-
-                else:
-                    # Format the results
-                    state = await self.response_formatter.process_state(state)
-
-
-                    # Extract user inputs from state for the result
-                    result["user_inputs"] = state.get("message_from_curator", {}).get("query", {})
-
-                    # Extract other info from state for the result
-                    raw_summary = state.get("message_from_curator", {}).get("summary", "")
-                    summary = json.loads(raw_summary)
-                    result["agent_message"] = summary["agent_message"]
-                    result["CTAs"] = summary["CTAs"]
-                    result["conversation_caption"] = summary["conversation_caption"]
-
-                    await MessageHistoryLoggerTool()._arun(action="store", conversation_id=conversation_id, messages=state["curator_message_history"], agent_type="curator")
-
-                    # Start background element processing
-                    ## Not sure what is happening @Rwik please look
-                    asyncio.create_task(self._process_element_details(state, conversation_id))
-
-        print(f"CuratorNode: Execution Completed in {time.time() - start_time:.2f} seconds")
-
-        # Return the result immediately, before the background task completes
-        return result
-    
-    async def _process_element_details(self, state: Dict[str, Any], conversation_id: str) -> None:
-        """
-        Process element details in the background.
-        
-        Args:
-            state: Current agent state
-            conversation_id: Unique conversation identifier
-        """
+        # Execute the workflow
         try:
-            print("Starting background element details processing")
-            element_details_state = await self.element_detail_gatherer.gather_element_details(state)
-
-            if "curated_suggestions" in element_details_state:
-                curated_suggestions = element_details_state["curated_suggestions"]
-
-                for suggestion in curated_suggestions:
-                    element_details = suggestion.get("element_details", None)
-                    suggestion_id = suggestion.get("suggestion_id", None)
-                    if element_details is None or suggestion_id is None:
-                        continue
-                    # Update the stored suggestion with element_details
-                    suggestion_logger_tool = SuggestionDataLoggerTool()
-                    tool_result = await suggestion_logger_tool._arun(
-                        action="update",
-                        data={"element_details": element_details},
-                        key=conversation_id,
-                        suggestion_id=suggestion_id
-                    )
-                    print(tool_result)
+            final_state = await self.workflow.ainvoke(initial_state)
+            
+            # Extract the final response
+            result = final_state.get("response", {})
+            
+            # Ensure we have the required fields
+            if not result:
+                result = {
+                    "user_inputs": final_state.get("user_inputs", {}),
+                    "agent_message": "",
+                    "CTAs": [],
+                    "conversation_caption": ""
+                }
+            
+            print(f"CuratorNode: Execution Completed in {time.time() - start_time:.2f} seconds")
+            return result
+            
         except Exception as e:
-            print(f"Error in background element details processing: {str(e)}")
-            # Log the full traceback for debugging
-            import traceback
-            print(traceback.format_exc())
+            print(f"Error in workflow execution: {e}")
+            # Return a fallback response
+            return {
+                "user_inputs": inputs,
+                "agent_message": f"Sorry, I encountered an error: {str(e)}",
+                "CTAs": [],
+                "conversation_caption": ""
+            }
 
 
 if __name__ == "__main__":
@@ -246,30 +430,37 @@ if __name__ == "__main__":
         print("Testing CuratorNode...")
         
         # Initialize the model
-        model = ChatOpenAI(model="gpt-4o", temperature=0.2)
+        model = ChatOpenAI(model="gpt-4o-mini", temperature=0.2)
         
         # Define basic tools
         tools = [
-            GoogleSearchTool(), UserDataLoggerTool(), SuggestionDataLoggerTool()
+            WebSearchTool(), 
+            UserDataLoggerTool()
         ]
         
         # Initialize the CuratorNode
         curator = CuratorNode(model, tools)
         
-        # Test query and conversation IDeleme
-        test_query = "can you tell me about Baga beach?"
-        test_conversation_id = f"xyz12"
+        # Test query and conversation ID
+        test_query = "What is the price of Rice in West Bengal between 1st Aug to 7th Aug?"
+        test_conversation_id = "74048e6b11964da0866d63df"
+        test_inputs = {
+            "latitude": 19.0760,
+            "longitude": 72.8777,
+            "place": "Maharashtra"
+        }
         
         # Call the curator
-        result = await curator(test_query, test_conversation_id)
+        result = await curator(test_query, test_conversation_id, test_inputs)
         
         # Print the results
         print("\n=== Test Results ===")
         print(f"Query: {test_query}")
         print(f"Conversation ID: {test_conversation_id}")
-        
-        print(f"\nAgent Message: {result.get('agent_message', 'No message')}")
-        print(f"Plan Generation Flag: {result.get('plan_gen_flag', 'no')}")
+        print(f"Agent Message: {result.get('agent_message', 'No message')}")
+        print(f"CTAs: {result.get('CTAs', [])}")
+        print(f"Conversation Caption: {result.get('conversation_caption', '')}")
+        print(f"Tool Calls: {result.get('tool_calls','')}")
         
         return result
 

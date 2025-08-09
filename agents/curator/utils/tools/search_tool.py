@@ -1,68 +1,73 @@
 from typing import Type
 from pydantic import BaseModel, Field
-import requests
 from langchain.tools import BaseTool
-import asyncio
+from tavily import TavilyClient
+
 import os
 import sys
-from utils.safe_url_fetcher import fetch_url_safe
 
-# Ensure the parent directory is in the path for config import
-sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
-from config import Config as config
+# Add the parent directory (project root) to the Python path
+sys.path.append(
+    os.path.abspath(os.path.join(os.path.dirname(__file__), "../../../.."))
+)
 
-class GoogleSearchInput(BaseModel):
+from agents.config import Config as config
+from pydantic import PrivateAttr
+
+class WebSearchInput(BaseModel):
     query: str = Field(..., description="Search query")
     k: int = Field(5, description="Number of search results to return (default: 5)")
 
-class GoogleSearchTool(BaseTool):
-    name: str = "GoogleSearchTool"
-    description: str = "Search Google using custom search engine by providing a query and number of search results."
-    args_schema: Type[GoogleSearchInput] = GoogleSearchInput
+class WebSearchTool(BaseTool):
+    name: str = "WebSearchTool"
+    description: str = (
+        "Search the web using Tavily by providing a query and number of search results. "
+        "Returns a list of results with title, link, snippet, favicon, and raw content."
+    )
+    args_schema: Type[WebSearchInput] = WebSearchInput
+
+    _client: TavilyClient = PrivateAttr(default=None)
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        api_key = getattr(config, "TAVILY_API_KEY", None)
+        self._client = TavilyClient(api_key)
+
+    def _run(self, **kwargs) -> str:
+        try:
+            query = kwargs.get("query")
+            k = kwargs.get("k", 5)
+            if not k:
+                k = 3
+
+            response = self._tavily_search_sync(
+                query=query,
+                k=k
+            )
+            return str(response)
+        except Exception as e:
+            error_msg = str(e)
+            return str([{
+                "Title": "Search Error",
+                "Link": "",
+                "Snippet": f"Error during search: {error_msg}",
+                "Success": False,
+                "Error": error_msg,
+                "Content": f"Error during search: {error_msg}"
+            }])
 
     async def _arun(self, **kwargs) -> str:
-        # print("Executing Google Search Tool")
         try:
-            if not kwargs['k']:
-                print("Tool call did not specify number of results. Setting default to 3")
-                kwargs['k'] = 3
+            query = kwargs.get("query")
+            k = kwargs.get("k", 5)
+            if not k:
+                k = 3
 
-            # Perform Google search using the custom search engine
-            query = f"{kwargs['query']} -tripadvisor -makemytrip -booking.com"
-            response = requests.get(f"https://www.googleapis.com/customsearch/v1?q={query}&key={config.GOOGLE_API_KEY}&cx={config.GOOGLE_CSE_ID}&num={kwargs['k']}")
-            response_json = response.json()
-
-            fetch_tasks = []
-            for item in response_json['items']:
-                if 'snippet' in item:
-                    print(f"{item['title']} ----- {item['link']}")
-                    # Store item info and create fetch task
-                    task = {
-                        "title": item['title'],
-                        "link": item['link'],
-                        "snippet": item['snippet'],
-                        "fetch_task": asyncio.create_task(asyncio.to_thread(fetch_url_safe, item['link']))
-                    }
-                    fetch_tasks.append(task)
-
-            print("Fetching Content")
-            raw_fetched_results = await asyncio.gather(*[task["fetch_task"] for task in fetch_tasks])
-            print(raw_fetched_results)
-            fetched_results = []
-            for task, result in zip(fetch_tasks, raw_fetched_results):
-                if result["error"] !="":
-                    print(f"{task['title']} ----- {task['link']} ----- {result['error']}")
-                fetched_results.append({
-                    "Title": task["title"],
-                    "Link": task["link"],
-                    "Snippet": task["snippet"],
-                    "Success": result["success"],
-                    "Error": result["error"],
-                    "Content": result["content"] if (result["error"] == "") else task["snippet"]
-                })
-
-            return fetched_results
-
+            response = await self._tavily_search_async(
+                query=query,
+                k=k
+            )
+            return response
         except Exception as e:
             error_msg = str(e)
             return [{
@@ -73,6 +78,47 @@ class GoogleSearchTool(BaseTool):
                 "Error": error_msg,
                 "Content": f"Error during search: {error_msg}"
             }]
+        
+    async def _tavily_search_async(self, query, k):
+        import asyncio
+        loop = asyncio.get_event_loop()
+        return await loop.run_in_executor(
+            None, self._tavily_search_sync, query, k
+        )
 
-    def _run(self, **kwargs):
-        raise NotImplementedError("Sync version not implemented.")
+    def _tavily_search_sync(self, query, k):
+        response = self._client.search(
+            query=query,
+            search_depth="basic",
+            include_favicon=True,
+            include_raw_content="text",
+            max_results=k
+        )
+        results = []
+        for item in response.get("results", []):
+            results.append({
+                "Title": item.get("title", ""),
+                "Link": item.get("url", ""),
+                "Snippet": item.get("content", ""),
+                "Favicon": item.get("favicon", ""),
+                "Success": True,
+                "Error": "",
+                "Content": item.get("raw_content", "") or item.get("content", "")
+            })
+        return results
+
+if __name__ == "__main__":
+    import asyncio
+    import json
+
+    async def test_search():
+        tool = WebSearchTool()
+        # Example query
+        query = "latest news in artificial intelligence"
+        k = 3
+        print(f"Testing WebSearchTool with query: '{query}', k={k}")
+        results = await tool._arun(query=query, k=k)
+        print("Results:")
+        print(json.dumps(results, indent=2, ensure_ascii=False))
+
+    asyncio.run(test_search())

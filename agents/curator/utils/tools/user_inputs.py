@@ -9,13 +9,15 @@ import requests
 import sys
 
 # Add the parent directory (project root) to the Python path
-sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+sys.path.append(
+    os.path.abspath(os.path.join(os.path.dirname(__file__), "../../../.."))
+)
 
-from config import Config as config
+from agents.config import Config as config
 
 class UserDataLoggerInput(BaseModel):
     action: str = Field(..., description="Action to perform (store, retrieve, update, delete, get_history)")
-    key: str = Field(..., description="Key to identify the trip inputs")
+    key: str = Field(..., description="Key to identify the user_inputs")
     data: Optional[Union[Dict[str, Any], str]] = Field(None, description="Data to store or update (can be dictionary or string)")
 
 class UserDataLoggerTool(BaseTool):
@@ -47,7 +49,7 @@ class UserDataLoggerTool(BaseTool):
                 response = requests.get(
                     self.db_url,
                     params={
-                        "collection_name": "trip_inputs",
+                        "collection_name": "user_inputs",
                         "_id": key
                     }
                 )
@@ -55,8 +57,8 @@ class UserDataLoggerTool(BaseTool):
                 print(f"Response: {response}")
 
                 if response.status_code == 200:
-                    user_inputs = json.loads(json.dumps(response.json().get('data', {}), indent=2))["user_inputs"]
-                    history = json.loads(json.dumps(response.json().get('data', {}), indent=2))["history"]
+                    user_inputs = json.loads(json.dumps(response.json().get('data', {}), indent=2)).get("user_inputs", {})
+                    history = json.loads(json.dumps(response.json().get('data', {}), indent=2)).get("history", [])
                 else:
                     user_inputs = data
                     history = []
@@ -67,7 +69,7 @@ class UserDataLoggerTool(BaseTool):
                 response = requests.post(
                     self.db_url,
                     params={
-                        "collection_name": "trip_inputs",
+                        "collection_name": "user_inputs",
                         "_id": key
                     },
                     json={
@@ -86,21 +88,21 @@ class UserDataLoggerTool(BaseTool):
                 response = requests.get(
                     self.db_url,
                     params={
-                        "collection_name": "trip_inputs",
+                        "collection_name": "user_inputs",
                         "_id": key
                     }
                 )
                 
                 if response.status_code == 200:
-                    user_inputs = json.loads(json.dumps(response.json().get('data', {}), indent=2))["user_inputs"]
-                    history = json.loads(json.dumps(response.json().get('data', {}), indent=2))["history"]
+                    user_inputs = json.loads(json.dumps(response.json().get('data', {}), indent=2)).get("user_inputs", {})
+                    history = json.loads(json.dumps(response.json().get('data', {}), indent=2)).get("history", [])
                     history = self.update_history(action, history)
                     
                     # Update history in the database
                     requests.post(
                         self.db_url,
                         params={
-                            "collection_name": "trip_inputs",
+                            "collection_name": "user_inputs",
                             "_id": key
                         },
                         json={
@@ -121,7 +123,7 @@ class UserDataLoggerTool(BaseTool):
                     response = requests.put(
                         self.db_url,
                         params={
-                            "collection_name": "trip_inputs",
+                            "collection_name": "user_inputs",
                             "_id": key,
                             "key": field_key
                         },
@@ -134,21 +136,21 @@ class UserDataLoggerTool(BaseTool):
                 response = requests.get(
                     self.db_url,
                     params={
-                        "collection_name": "trip_inputs",
+                        "collection_name": "user_inputs",
                         "_id": key
                     }
                 )
                 if response.status_code == 200:
-                    user_inputs = json.loads(json.dumps(response.json().get('data', {}), indent=2))["user_inputs"]
+                    user_inputs = json.loads(json.dumps(response.json().get('data', {}), indent=2)).get("user_inputs", {})
                     user_inputs["updated_at"] = timestamp
-                    history = json.loads(json.dumps(response.json().get('data', {}), indent=2))["history"]
+                    history = json.loads(json.dumps(response.json().get('data', {}), indent=2)).get("history", [])
                     history = self.update_history(action, history, data)
                     
                     # Update history in the database
                     requests.post(
                         self.db_url,
                         params={
-                            "collection_name": "trip_inputs",
+                            "collection_name": "user_inputs",
                             "_id": key
                         },
                         json={
@@ -164,19 +166,19 @@ class UserDataLoggerTool(BaseTool):
                 response = requests.get(
                     self.db_url,
                     params={
-                        "collection_name": "trip_inputs",
+                        "collection_name": "user_inputs",
                         "_id": key
                     }
                 )
                 if response.status_code == 200:
-                    history = json.loads(json.dumps(response.json().get('data', {}), indent=2))["history"]
+                    history = json.loads(json.dumps(response.json().get('data', {}), indent=2)).get("history", [])
                     history = self.update_history(action, history)
                     
                     # Update history in the database
                     requests.post(
                         self.db_url,
                         params={
-                            "collection_name": "trip_inputs",
+                            "collection_name": "user_inputs",
                             "_id": key
                         },
                         json={
@@ -200,11 +202,11 @@ class UserDataLoggerTool(BaseTool):
 if __name__ == "__main__":
     # Example usage
     tool = UserDataLoggerTool()
-    action = "retrieve"
+    action = "store"
     key = "68048e6b11964da0866d63ce"
     data = {
         "destination": "Taiwan"
     }
     
-    result = tool._run(action=action, key=key)
+    result = tool._run(action=action, key=key, data=data)
     print(result)

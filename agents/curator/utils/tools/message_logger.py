@@ -9,10 +9,12 @@ import os
 import requests
 import sys
 
-# Add the parent directory (project root) to the Python path
-sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+# Add the project root to the Python path
+sys.path.append(
+    os.path.abspath(os.path.join(os.path.dirname(__file__), "../../../.."))
+)
 
-from config import Config as config
+from agents.config import Config as config
 
 class MessageHistoryLoggerInput(BaseModel):
     action: str = Field(..., description="Action to perform (store, retrieve, update, delete)")
@@ -103,7 +105,6 @@ class MessageHistoryLoggerTool(BaseTool):
         """Asynchronous execution of the tool"""
         try:
             timestamp = datetime.datetime.now().isoformat()
-            collection_name = "conversation_history"
 
             if action == "store":
                 if not messages:
@@ -113,16 +114,34 @@ class MessageHistoryLoggerTool(BaseTool):
                     self._serialize_message(msg) for msg in messages
                 ]
 
+                # Retrieve existing message document
+                response = requests.get(
+                    self.db_url,
+                    params={
+                        "collection_name": "messages",
+                        "_id": conversation_id,
+                    }
+                )
+
+                if response.status_code == 200:
+                    doc = response.json().get('data', {})
+                else:
+                    doc = {}
+
+                # Update this agent_type's messages
+                doc[agent_type] = {
+                    "messages": serialized_messages,
+                    "updated_at": timestamp
+                }
+
+                # Persist the updated document
                 response = requests.post(
                     self.db_url,
                     params={
-                        "collection_name": f"{agent_type}_message_history",
+                        "collection_name": "messages",
                         "_id": conversation_id,
                     },
-                    json={
-                        "messages": serialized_messages,
-                        "updated_at": timestamp
-                    }
+                    json=doc
                 )
                 
                 if response.status_code == 200:
@@ -134,34 +153,50 @@ class MessageHistoryLoggerTool(BaseTool):
                 response = requests.get(
                     self.db_url,
                     params={
-                        "collection_name": collection_name,
+                        "collection_name": "messages",
                         "_id": conversation_id,
-                        "message_history_type": f"{agent_type}_message_history"
                     }
                 )
                 
                 if response.status_code == 200:
                     data = response.json().get('data', {})
-                    agent_history = data.get(f'{agent_type}_message_history', {})
+                    agent_history = data.get(agent_type, {})
                     messages = agent_history.get('messages', [])
                     return [self._deserialize_message(msg) for msg in messages]
                 else:
                     return []
 
             elif action == "delete":
-                response = requests.post(
+                # Retrieve existing
+                response = requests.get(
                     self.db_url,
                     params={
-                        "collection_name": f"{agent_type}_message_history",
+                        "collection_name": "messages",
                         "_id": conversation_id,
-                    },
-                    json={}
+                    }
                 )
-                
+
                 if response.status_code == 200:
-                    return f"{agent_type.capitalize()} message history deleted for conversation ID: {conversation_id}"
+                    doc = response.json().get('data', {})
+                    if agent_type in doc:
+                        doc.pop(agent_type)
+
+                    # Persist updated doc
+                    response = requests.post(
+                        self.db_url,
+                        params={
+                            "collection_name": "messages",
+                            "_id": conversation_id,
+                        },
+                        json=doc
+                    )
+
+                    if response.status_code == 200:
+                        return f"{agent_type.capitalize()} message history deleted for conversation ID: {conversation_id}"
+                    else:
+                        return f"Error deleting messages: {response.text}"
                 else:
-                    return f"Error deleting messages: {response.text}"
+                    return f"Error fetching existing messages: {response.text}"
 
             else:
                 return f"Error: Invalid action '{action}'. Use 'store', 'retrieve', or 'delete'."
@@ -189,10 +224,10 @@ if __name__ == "__main__":
     ]
 
     response = logger_tool._run(
-        action="retrieve",
+        action="store",
         conversation_id="68048e6b11964da0866d63de",
         agent_type="curator",
-        # messages=messages_to_store
+        messages=messages_to_store
     )
     
     print(response)

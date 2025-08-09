@@ -10,12 +10,11 @@ import sys
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from utils.tools.message_logger import MessageHistoryLoggerTool
-from utils.tools.trip_inputs import UserDataLoggerTool
-from utils.tools.suggestions_logger import SuggestionDataLoggerTool
+from agents.curator.utils.tools.user_inputs import UserDataLoggerTool
 
 class ResponseFormatter:
     """
-    A class responsible for formatting tool results into structured suggestions.
+    A class responsible for formatting tool results into agricultural advice and responses.
     It processes raw tool outputs into a user-friendly format and provides
     summary messages for agent-user interactions.
     """
@@ -33,63 +32,55 @@ class ResponseFormatter:
     
     async def process_state(self, state: Dict[str, Any]) -> Dict[str, Any]:
         """
-        Formats tool results into structured suggestions.
+        Formats tool results into agricultural advice and responses.
 
         Args:
             state: Current state of the agent
 
         Returns:
-            Updated agent state with formatted suggestions and curator message
+            Updated agent state with formatted response and curator message
         """
         print("ResponseFormatter: Starting Response Formatter")
         start_time = time.time()
 
-        # Get curator message history
-        curator_message_history = state.get("curator_message_history", [])
+        # Get message history
+        message_history = state.get("message_history", [])
 
-        # Extract URLs from search results
-        urls = [item['Link'] for search_result in state['task_results'].get('GoogleSearchTool', []) 
-                for item in search_result.get('result', [])]
+        # Extract URLs from search results for reference
+        urls = []
+        task_results = state.get('task_results', {})
+        if task_results:
+            for search_result in task_results.get('GoogleSearchTool', []):
+                if isinstance(search_result.get('result'), list):
+                    for item in search_result.get('result', []):
+                        if isinstance(item, dict) and 'Link' in item:
+                            urls.append(item['Link'])
 
         # Extract conversation_id for data retrieval
         conversation_id = state['message_to_curator']['conversation_id']
         
-        # Fetch user inputs and previous suggestions
+        # Fetch user inputs
         user_inputs = await self._fetch_user_inputs(conversation_id)
-        prev_suggestions = await self._fetch_previous_suggestions(conversation_id)
         
-        # Format suggestions using the model
-        curator_message_history = await self._generate_suggestions(
-            state, curator_message_history, user_inputs
+        # Generate agricultural advice using the model
+        message_history = await self._generate_agricultural_advice(
+            state, message_history, user_inputs
         )
         
-        # Process the formatter response
-        curator_response = self._extract_curator_response(curator_message_history[-1])
-        
-        # Add reference URLs to the response
-        curator_response["reference_urls"] = urls
-        
-        # Update suggestions in state
-        state["curated_suggestions"] = self._merge_suggestions(prev_suggestions, curator_response)
-        
-        # Store the newly created suggestion
-        await self._store_suggestion(curator_response, conversation_id)
-        
         # Generate summary message
-        curator_message_history = await self._generate_summary(curator_message_history)
+        message_history = await self._generate_summary(message_history)
         
         # Retrieve final user inputs for the response
         user_inputs = await self._fetch_user_inputs(conversation_id)
         
-        # Update the state with user inputs, suggestions, and summary
+        # Update the state with user inputs and summary
         state["message_from_curator"] = {
             "user_inputs": user_inputs,
-            "suggestions": state["curated_suggestions"],
-            "summary": self._extract_summary(curator_message_history[-1])
+            "summary": self._extract_summary(message_history[-1])
         }
         
         # Update message history in state
-        state["curator_message_history"] = curator_message_history
+        state["message_history"] = message_history
         
         print(f"ResponseFormatter: Response Formatter Completed in {time.time() - start_time:.2f} seconds")
         
@@ -130,61 +121,25 @@ class ResponseFormatter:
                 
         return user_inputs
     
-    async def _fetch_previous_suggestions(self, conversation_id: str) -> List[Dict]:
+    async def _generate_agricultural_advice(self, 
+                                           state: Dict[str, Any],
+                                           message_history: List[BaseMessage],
+                                           user_inputs: Dict) -> List[BaseMessage]:
         """
-        Fetch previous suggestions for the current conversation.
-        
-        Args:
-            conversation_id: Unique identifier for the conversation
-            
-        Returns:
-            List of previous suggestions
-        """
-        # Create a tool call for retrieving suggestions
-        suggestion_logger_tool = SuggestionDataLoggerTool()
-        
-        # Execute the tool call to retrieve suggestions
-        prev_suggestions = await suggestion_logger_tool._arun(
-            action="retrieve",
-            key=conversation_id
-        )
-        
-        if prev_suggestions == 'No suggestions found for the specified conversation ID':
-            return []
-        else:
-            # Filter to_be_approved suggestions
-            return [suggestion for suggestion in json.loads(prev_suggestions) 
-                   if suggestion.get("status", "") == "to_be_approved"]
-    
-    async def _generate_suggestions(self, 
-                                   state: Dict[str, Any],
-                                   curator_message_history: List[BaseMessage],
-                                   user_inputs: Dict) -> List[BaseMessage]:
-        """
-        Generate suggestions using the model.
+        Generate agricultural advice using the model.
         
         Args:
             state: Current agent state
-            curator_message_history: Conversation history
+            message_history: Conversation history
             user_inputs: User inputs for context
             
         Returns:
-            Updated conversation history with suggestion response
+            Updated conversation history with agricultural advice response
         """
         # Add task results for formatting
-        curator_message_history.append(
+        message_history.append(
             HumanMessage(content=f"""
-            Please format the following above tool results into a single piece of suggestion content containing everything from the tool results according to the required structure and guidelines:
-            -- Suggestion ID (10 alphanumeric characters)
-            -- Suggestion Content (Should not contain any links)
-            -- Suggestion Status (To be approved)
-                         
-            JSON Format:
-            {{
-                "suggestion_id": "xxxxxxxxxx",
-                "content": "Formatted suggestion content",
-                "status": "to_be_approved"
-            }}
+            Please analyze the tool results above and provide comprehensive agricultural advice based on the user's query and context. 
 
             User Query:
             {state['message_to_curator']['query']}
@@ -193,116 +148,57 @@ class ResponseFormatter:
             {json.dumps(user_inputs, indent=2)}
 
             Guidelines:
-            - Ensure that the suggestion content is a well formatted markdown with each suggestion as a bullet point.
-            - The content should be succint, to the point, and not very verbose. It should not contain more than 6-7 bullet points
-            - The first line of the suggestion should clearly state the place (specific or generic) for which these suggestions are curated. That place should be formatted in bold.
-            - The key locations/activities covered in the suggestion content should be formmated in bold, and you should also generate an emoticon for the following (The emoticon should be related to the location/activity).
-            - Only names of specific tourist locations or specific activities in specific locations must be formatted in bold (for eg. Hill Resort should not be boldened, but Tiger Hills should be). Also specify the state/county/city where it is located (as in The Ridge, Shimla or Tiger Hills, Darjeeling).
-            - Generic activity names or generic location names or even broad citiy/state names should not be formatted as bold
-            - As a rule of thumb, for every bullet point don't have more than 1 or two things formatted in bold
-            - DO NOT format anything except these specific tourist locations/activities. Headings should not be boldened.
-            - Keep the overall tone friendly and warm. Avoid using any complex language.
+            - Provide practical, actionable agricultural advice
+            - Focus on the specific crops, soil types, or farming techniques mentioned
+            - Include relevant information about weather conditions, pest management, or soil health
+            - Consider local agricultural practices and government schemes if applicable
+            - Structure the advice in a clear, organized manner
+            - Include any relevant references or sources if available
+            - Try to include as much information as possible from the tool results
 
-            Note:if suggestions == 'No suggestions found for the specified conversation ID':
-            filtered_suggestions = []
-            - Do not generate any other text other than the suggestions.
-            - Ensure the suggestions are in the correct JSON format.
-            - Make sure to follow the guidelines for suggestions.
+            Format your response as a comprehensive agricultural advice message that directly addresses the user's query.
             """)
         )
         
-        # Get formatted suggestions
-        formatter_response = self.model.invoke(curator_message_history)
+        # Get agricultural advice
+        advice_response = self.model.invoke(message_history)
         
-        # Add formatter response to message history
-        curator_message_history.append(formatter_response)
+        # Add advice response to message history
+        message_history.append(advice_response)
         
-        return curator_message_history
+        return message_history
     
-    def _extract_curator_response(self, formatter_response: BaseMessage) -> Dict:
-        """
-        Extract structured response from formatter message.
-        
-        Args:
-            formatter_response: The message containing formatted response
-            
-        Returns:
-            Structured curator response as a dictionary
-        """
-        curator_message = formatter_response.content
-        curator_message = curator_message.replace('```json','').replace('```','').strip()
-        return json.loads(curator_message)
-    
-    def _merge_suggestions(self, previous_suggestions: List[Dict], new_suggestion: Dict) -> List[Dict]:
-        """
-        Merge previous suggestions with the new suggestion.
-        
-        Args:
-            previous_suggestions: List of previous suggestions
-            new_suggestion: Newly generated suggestion
-            
-        Returns:
-            Combined list of suggestions
-        """
-        try:
-            return previous_suggestions + [new_suggestion]
-        except:
-            return [new_suggestion] if isinstance(new_suggestion, dict) else new_suggestion
-    
-    async def _store_suggestion(self, curator_response: Dict, conversation_id: str) -> None:
-        """
-        Store the curated suggestion in the data store.
-        
-        Args:
-            curator_response: The suggestion to store
-            conversation_id: Unique identifier for the conversation
-        """
-        # Create a tool call for storing suggestions
-        suggestion_logger_tool = SuggestionDataLoggerTool()
-        
-        # Execute the tool call to store suggestions with detailed elements
-        try:
-            res = await suggestion_logger_tool._arun(
-                action="store",
-                data=curator_response,
-                key=conversation_id
-            )
-            print(res)
-        except Exception as e:
-            raise e
-    
-    async def _generate_summary(self, curator_message_history: List[BaseMessage]) -> List[BaseMessage]:
+    async def _generate_summary(self, message_history: List[BaseMessage]) -> List[BaseMessage]:
         """
         Generate a summary message for the user.
         
         Args:
-            curator_message_history: Conversation history
+            message_history: Conversation history
             
         Returns:
             Updated conversation history with summary response
         """
         # Add summary request to message history
-        curator_message_history.append(
+        message_history.append(
             HumanMessage(content=f"""
-            Now that you have curated some suggestions, can you should write a small final message that explains the thought process behind curating these suggestions, including any assumptions made to fill gaps in user input.
-            In this same message, in a new line, you can ask/guide users on how to give feedback on the recommendations
+            Now that you have provided agricultural advice, write a final message that summarizes the key points and offers next steps for the user.
 
-            Additionally, you should also offer them them 3 CTAs to help them give feedback based on your suggestions. These must be logical queries/feedback that the user might have based on your response.
+            Additionally, you should also offer them 3 CTAs to help them continue their agricultural journey. These must be logical queries/feedback that the user might have based on your response.
 
             Your response should be in the following format:
-            {{"agent_message": "A well articulated message with the curated suggestions", "CTAs": "A comma-separated list (i.e. within square brackets) of the two prescribed CTAs", "plan_gen_flag": "yes" if user has asked for detailed plan and provided all mandatory inputs, else "no","conversation_caption": "A short caption, less than 10 words, for the conversation. If this is a new conversation, create a new caption. If continuing the same topic, use the previous caption."}}.
+            {{"agent_message": "A well articulated summary message with the key agricultural advice points", "CTAs": "A comma-separated list (i.e. within square brackets) of the three prescribed CTAs", "conversation_caption": "A short caption, less than 10 words, for the conversation. If this is a new conversation, create a new caption. If continuing the same topic, use the previous caption."}}.
 
-            Make sure that the tone of your final message is friendly and warm. And it should not focus too much on relisting the contents of the curated suggestions.
+            Make sure that the tone of your final message is friendly and warm. Focus on summarizing the key agricultural advice and providing clear next steps.
             """)
         )
         
         # Get summary message
-        summary_response = self.model.invoke(curator_message_history)
+        summary_response = self.model.invoke(message_history)
         
         # Add summary response to message history
-        curator_message_history.append(summary_response)
+        message_history.append(summary_response)
         
-        return curator_message_history
+        return message_history
     
     def _extract_summary(self, summary_response: BaseMessage) -> str:
         """

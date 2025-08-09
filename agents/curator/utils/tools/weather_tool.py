@@ -328,12 +328,12 @@ class WeatherAnalysisTool(BaseTool):
         """Format current weather data."""
         current = data["current_weather"]
         return f"""
-Current weather in {location}:
-Temperature: {current['temperature']}°C
-Conditions: {self._weather_code_to_condition(current['weathercode'])}
-Wind Speed: {current['windspeed']} km/h
-Last Updated: {current['time']} UTC
-"""
+            Current weather in {location}:
+            Temperature: {current['temperature']}°C
+            Conditions: {self._weather_code_to_condition(current['weathercode'])}
+            Wind Speed: {current['windspeed']} km/h
+            Last Updated: {current['time']} UTC
+            """
 
     def _format_forecast_weather(self, data: Dict, location: str) -> str:
         """Format weather forecast data."""
@@ -342,11 +342,11 @@ Last Updated: {current['time']} UTC
         
         for i in range(len(daily["time"])):
             forecast_text += f"""
-Date: {daily['time'][i]}
-Temperature: {daily['temperature_2m_min'][i]}°C to {daily['temperature_2m_max'][i]}°C
-Precipitation: {daily['precipitation_sum'][i]}mm
-Wind Speed (max): {daily['wind_speed_10m_max'][i]} km/h
----"""
+            Date: {daily['time'][i]}
+            Temperature: {daily['temperature_2m_min'][i]}°C to {daily['temperature_2m_max'][i]}°C
+            Precipitation: {daily['precipitation_sum'][i]}mm
+            Wind Speed (max): {daily['wind_speed_10m_max'][i]} km/h
+            ---"""
         return forecast_text
 
     def _format_historical_weather(self, data: Dict, location: str) -> str:
@@ -359,9 +359,9 @@ Wind Speed (max): {daily['wind_speed_10m_max'][i]} km/h
         total_precipitation = sum(daily["precipitation_sum"])
         
         return f"""
-Historical weather analysis for {location}:
-Date Range: {daily['time'][0]} to {daily['time'][-1]}
-Average Temperature Range: {avg_temp_min:.1f}°C to {avg_temp_max:.1f}°C
-Total Precipitation: {total_precipitation:.1f}mm
-Summary: {len(daily['time'])} days analyzed
-"""
+            Historical weather analysis for {location}:
+            Date Range: {daily['time'][0]} to {daily['time'][-1]}
+            Average Temperature Range: {avg_temp_min:.1f}°C to {avg_temp_max:.1f}°C
+            Total Precipitation: {total_precipitation:.1f}mm
+            Summary: {len(daily['time'])} days analyzed
+            """
