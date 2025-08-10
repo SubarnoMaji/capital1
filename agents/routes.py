@@ -1,0 +1,109 @@
+from fastapi import FastAPI, HTTPException, Body, Depends, APIRouter
+from typing import Optional, Any
+from langchain_openai import ChatOpenAI
+from dotenv import load_dotenv, find_dotenv
+from pymongo import MongoClient
+from datetime import datetime
+from bson import ObjectId
+import os
+from typing import Dict, List, Optional, Any
+from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel, Field
+import sys
+
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+from agents.config import Config as config
+from curator.services.curator_service import CuratorNode
+from curator.utils.tools.search_tool import WebSearchTool
+from curator.utils.tools.message_logger import MessageHistoryLoggerTool
+from agents.curator.utils.tools.user_inputs import UserDataLoggerTool
+
+router = APIRouter(prefix="/api/agent")
+
+# Define request and response models
+class CuratorRequest(BaseModel):
+    query: str = Field(..., description="User query for travel recommendations")
+    conversation_id: str = Field(..., description="Unique identifier for the conversation")
+    inputs: Optional[Dict] = Field(None, description="User inputs for the query")
+
+class CuratorResponse(BaseModel):
+    user_inputs: Dict[str, Any] = Field(..., description="User inputs extracted from the query")
+    suggestions: Dict[str, Any] = Field(..., description="Curated travel suggestions")
+    agent_message: str = Field(..., description="Agent's response message")
+    CTAs: List[str] = Field(..., description="Call-to-action suggestions")
+    plan_gen_flag: str = Field(..., description="Flag indicating if a plan should be generated")
+    conversation_caption: str = Field(..., description="Caption for the conversation")
+
+# Initialize the model and tools
+def get_curator():
+    """
+    Dependency to get the CuratorNode instance.
+    """
+    # Initialize the model
+    model = ChatOpenAI(model="gpt-4o", temperature=0.2)
+    
+    # Define tools
+    tools = [
+        WebSearchTool(),
+        UserDataLoggerTool(),
+        MessageHistoryLoggerTool()
+    ]
+    
+    # Initialize the CuratorNode
+    curator = CuratorNode(model, tools)
+    
+    return curator
+    
+@router.post("/curator", response_model=CuratorResponse)
+async def curate(
+    request: CuratorRequest,
+    curator: CuratorNode = Depends(get_curator)
+):
+    """
+    Endpoint to get curated travel suggestions based on user query.
+    
+    Args:
+        request: CuratorRequest containing the user query and conversation ID
+        background_tasks: FastAPI background tasks
+        curator: CuratorNode instance (injected by FastAPI)
+        
+    Returns:
+        CuratorResponse containing curated suggestions and agent message
+    """
+    try:
+        # Call the curator service
+        result = await curator(request.query, request.conversation_id, request.inputs)
+        
+        # Return the result
+        return CuratorResponse(
+            user_inputs=result.get("user_inputs", {}),
+            suggestions=result.get("suggestions", {}),
+            agent_message=result.get("agent_message", ""),
+            CTAs=result.get("CTAs", []),
+            plan_gen_flag=result.get("plan_gen_flag", "no"),
+            conversation_caption=result.get("conversation_caption", "")
+        )
+    except Exception as e:
+        # Log the error and return a 500 error
+        print(f"Error in curator service: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error in curator service: {str(e)}")
+    
+@router.get("/health")
+async def health_check():
+    """
+    Health check endpoint to verify the API is running.
+    """
+    return {"status": "healthy"}
+
+app = FastAPI()
+app.include_router(router)
+
+# Add CORS middleware
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # Allows all origins
+    allow_credentials=True,
+    allow_methods=["*"],  # Allows all methods
+    allow_headers=["*"],  # Allows all headers
+)
