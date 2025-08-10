@@ -6,7 +6,7 @@ usecases/pest-detection/ip102_v1.1
 usecases/pest-detection/src
 # C extensions
 *.so
-
+indexer/utils/documents
 .env
 env/
 # Distribution / packaging

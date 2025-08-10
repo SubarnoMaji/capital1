@@ -3,7 +3,7 @@ name = "agents"
 version = "0.1.0"
 description = ""
 authors = [
-    {name = "rwik04",email = "rwik04@kgpian.iitkgp.ac.in"}
+    { name = "rwik04", email = "rwik04@kgpian.iitkgp.ac.in" }
 ]
 readme = "README.md"
 requires-python = ">=3.12,<4.0"
@@ -17,6 +17,8 @@ dependencies = [
     "langgraph (>=0.6.4,<0.7.0)"
 ]
 
+[tool.poetry]
+packages = [{ include = "agents", from = "src" }]
 
 [build-system]
 requires = ["poetry-core>=2.0.0,<3.0.0"]
