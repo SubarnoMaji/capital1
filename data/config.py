@@ -26,20 +26,10 @@ class Config:
     GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
     GOOGLE_CSE_ID = os.getenv("GOOGLE_CSE_ID")
     OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
-    TAVILY_API_KEY = os.getenv("TAVILY_API_KEY")
 
     # MongoDB settings
     MONGO_URI = os.getenv("MONGO_URI")
     MONGO_DB_NAME = os.getenv("MONGO_DB_NAME")
-    
-    # Qdrant Config
-    QDRANT_URL = os.getenv('QDRANT_URL')
-    QDRANT_API_KEY = os.getenv('QDRANT_API_KEY')
-    
-    TEXT_EMBEDDING_MODEL = os.getenv("TEXT_EMBEDDING_MODEL")
-    IMAGE_EMBEDDING_MODEL = os.getenv("IMAGE_EMBEDDING_MODEL")
-
-    COLLECTION_NAME = "products-data"
 
 if __name__=="__main__":
     config = Config()
