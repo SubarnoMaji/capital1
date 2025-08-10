@@ -9,11 +9,17 @@ import concurrent.futures
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from config import Config
-import google.generativeai as genai
+
+from langchain_openai import ChatOpenAI
+from langchain_core.prompts import ChatPromptTemplate
 
 METADATA_SAVE_DIR = getattr(Config, "METADATA_SAVE_DIR", ".cache/metadata_list")
 Path(METADATA_SAVE_DIR).mkdir(parents=True, exist_ok=True)
 METADATA_LOG_FILE = os.path.join(METADATA_SAVE_DIR, "all_metadata.json")
+
+from dotenv import load_dotenv
+
+load_dotenv()
 
 sample_json = {
     "document_type": "farming report",
@@ -22,7 +28,7 @@ sample_json = {
     "year": 2024,
 }
 
-prompt = """
+prompt_template = """
 You are an expert assistant for an agriculture and farming knowledge system.
 
 Analyze the provided document and extract structured metadata relevant to agriculture and farming. Focus on type safety and specificity.
@@ -119,19 +125,25 @@ class MetadataGrouper:
 
 class MetadataGenerator:
     """
-    A class to generate document metadata using Gemini Flash (Google Generative AI).
+    A class to generate document metadata using OpenAI via LangChain.
     Only generates metadata for the complete document, not for each chunk.
     Instead of caching, appends all unique generated metadata to a JSON file.
     Optionally groups metadata using MetadataGrouper if use_grouping is True.
     """
-    def __init__(self, use_grouping=False, grouper_kwargs=None):
-        api_key = os.getenv("GOOGLE_API_KEY")
-        if not api_key:
-            raise ValueError("GOOGLE_API_KEY environment variable not set.")
-        
-        genai.configure(api_key=api_key)
-        self.model = genai.GenerativeModel("gemini-1.5-flash-latest")
-        
+    def __init__(self, use_grouping=False, grouper_kwargs=None, model_name=None, openai_api_key=None):
+        # Use OpenAI API key from env or config
+        self.openai_api_key = openai_api_key or os.getenv("OPENAI_API_KEY") or getattr(Config, "OPENAI_API_KEY", None)
+        if not self.openai_api_key:
+            raise ValueError("OPENAI_API_KEY environment variable or config not set.")
+
+        self.model_name = model_name or "gpt-3.5-turbo"
+        self.llm = ChatOpenAI(
+            model=self.model_name,
+            temperature=0.0,
+            openai_api_key=self.openai_api_key,
+            max_tokens=1024,
+        )
+
         logging.basicConfig(
             format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
             level=logging.INFO,
@@ -148,24 +160,23 @@ class MetadataGenerator:
                 grouper_kwargs = {}
             self.grouper = MetadataGrouper(**grouper_kwargs)
 
+        # Prepare prompt template
+        self.prompt = ChatPromptTemplate.from_template(prompt_template)
+
     def generate(self, doc_text, doc_name):
-        content = prompt.format(
+        content = self.prompt.format(
             doc_text=doc_text,
             doc_name=doc_name,
             sample_json=json.dumps(sample_json, indent=4),
         )
 
         try:
-            response = self.model.generate_content(
-                [content],
-                generation_config={
-                    "temperature": 0.0,
-                    "max_output_tokens": 1024,
-                }
-            )
-            enhanced_data = response.text.strip()
+            # LangChain expects a list of messages, but ChatPromptTemplate returns a string
+            # So we use the string as a single user message
+            response = self.llm.invoke([{"role": "user", "content": content}])
+            enhanced_data = response.content.strip()
             enhanced_data = enhanced_data.replace("```json", "").replace("```", "").strip()
-            
+
             try:
                 addn_metadata = json.loads(enhanced_data)
             except json.JSONDecodeError as e:
@@ -211,7 +222,7 @@ class MetadataGenerator:
                     return [addn_metadata]
             else:
                 return addn_metadata
-        
+
         except Exception as e:
             self.logger.error(f"Error generating metadata: {str(e)}")
             return {
@@ -237,4 +248,3 @@ if __name__ == "__main__":
     metadata_generator = MetadataGenerator(use_grouping=True)
     metadata = metadata_generator.generate(doc_text, doc_name)
     print(json.dumps(metadata, indent=4, ensure_ascii=False))
-

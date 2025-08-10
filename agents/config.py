@@ -13,6 +13,7 @@ class Config:
     IMAGE_EMBEDDING_MODEL = os.getenv("IMAGE_EMBEDDING_MODEL")
 
     COLLECTION_NAME = "products-data"
+    METADATA_FILE = r"C:\Users\subar\OneDrive\Desktop\capitalone\agents\tools\utils\all_metadata.json"
     
 if __name__ == "__main__":
   
