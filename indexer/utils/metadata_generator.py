@@ -10,14 +10,14 @@ import concurrent.futures
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from config import Config
 
-from langchain_openai import ChatOpenAI
-from langchain_core.prompts import ChatPromptTemplate
+from dotenv import load_dotenv
+
+# Use Google Gemini API directly
+import google.generativeai as genai
 
 METADATA_SAVE_DIR = getattr(Config, "METADATA_SAVE_DIR", ".cache/metadata_list")
 Path(METADATA_SAVE_DIR).mkdir(parents=True, exist_ok=True)
 METADATA_LOG_FILE = os.path.join(METADATA_SAVE_DIR, "all_metadata.json")
-
-from dotenv import load_dotenv
 
 load_dotenv()
 
@@ -125,24 +125,21 @@ class MetadataGrouper:
 
 class MetadataGenerator:
     """
-    A class to generate document metadata using OpenAI via LangChain.
+    A class to generate document metadata using Google Gemini API directly.
     Only generates metadata for the complete document, not for each chunk.
     Instead of caching, appends all unique generated metadata to a JSON file.
     Optionally groups metadata using MetadataGrouper if use_grouping is True.
     """
-    def __init__(self, use_grouping=False, grouper_kwargs=None, model_name=None, openai_api_key=None):
-        # Use OpenAI API key from env or config
-        self.openai_api_key = openai_api_key or os.getenv("OPENAI_API_KEY") or getattr(Config, "OPENAI_API_KEY", None)
-        if not self.openai_api_key:
-            raise ValueError("OPENAI_API_KEY environment variable or config not set.")
+    def __init__(self, use_grouping=False, grouper_kwargs=None, model_name=None, google_api_key=None):
+        # Use Google API key from env or config
+        self.google_api_key = google_api_key or os.getenv("GOOGLE_API_KEY") or getattr(Config, "GOOGLE_API_KEY", None)
+        if not self.google_api_key:
+            raise ValueError("GOOGLE_API_KEY environment variable or config not set.")
 
-        self.model_name = model_name or "gpt-3.5-turbo"
-        self.llm = ChatOpenAI(
-            model=self.model_name,
-            temperature=0.0,
-            openai_api_key=self.openai_api_key,
-            max_tokens=1024,
-        )
+        self.model_name = model_name or "gemini-2.5-flash-lite"
+
+        genai.configure(api_key=self.google_api_key)
+        self.model = genai.GenerativeModel(self.model_name)
 
         logging.basicConfig(
             format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
@@ -160,21 +157,21 @@ class MetadataGenerator:
                 grouper_kwargs = {}
             self.grouper = MetadataGrouper(**grouper_kwargs)
 
-        # Prepare prompt template
-        self.prompt = ChatPromptTemplate.from_template(prompt_template)
-
-    def generate(self, doc_text, doc_name):
-        content = self.prompt.format(
+    def _format_prompt(self, doc_text, doc_name):
+        return prompt_template.format(
             doc_text=doc_text,
             doc_name=doc_name,
             sample_json=json.dumps(sample_json, indent=4),
         )
 
+    def generate(self, doc_text, doc_name):
+        content = self._format_prompt(doc_text, doc_name)
+
         try:
-            # LangChain expects a list of messages, but ChatPromptTemplate returns a string
-            # So we use the string as a single user message
-            response = self.llm.invoke([{"role": "user", "content": content}])
-            enhanced_data = response.content.strip()
+            # Use Gemini API directly
+            response = self.model.generate_content(content)
+            enhanced_data = response.text.strip() if hasattr(response, "text") else response.candidates[0].content.parts[0].text.strip()
+
             enhanced_data = enhanced_data.replace("```json", "").replace("```", "").strip()
 
             try:
