@@ -15,7 +15,7 @@ class Config:
     QDRANT_API_KEY = os.getenv('QDRANT_API_KEY')
 
     # Model Config
-    TEXT_EMBEDDING_MODEL = "Qwen/Qwen3-Embedding-0.6B"
+    TEXT_EMBEDDING_MODEL = os.getenv("TEXT_EMBEDDING_MODEL")
     IMAGE_EMBEDDING_MODEL = os.getenv("IMAGE_EMBEDDING_MODEL")
 
     COLLECTION_NAME = "new2"
