@@ -18,6 +18,7 @@ from curator.services.curator_service import CuratorNode
 from curator.utils.tools.search_tool import WebSearchTool
 from curator.utils.tools.message_logger import MessageHistoryLoggerTool
 from agents.curator.utils.tools.user_inputs import UserDataLoggerTool
+# from agents.curator.utils.tools.pest_detection import PestDetectionTool
 
 router = APIRouter(prefix="/api/agent")
 
@@ -47,7 +48,8 @@ def get_curator():
     tools = [
         WebSearchTool(),
         UserDataLoggerTool(),
-        MessageHistoryLoggerTool()
+        MessageHistoryLoggerTool(),
+        # PestDetectionTool()
     ]
     
     # Initialize the CuratorNode
@@ -77,11 +79,8 @@ async def curate(
         
         # Return the result
         return CuratorResponse(
-            user_inputs=result.get("user_inputs", {}),
-            suggestions=result.get("suggestions", {}),
             agent_message=result.get("agent_message", ""),
             CTAs=result.get("CTAs", []),
-            plan_gen_flag=result.get("plan_gen_flag", "no"),
             conversation_caption=result.get("conversation_caption", "")
         )
     except Exception as e:

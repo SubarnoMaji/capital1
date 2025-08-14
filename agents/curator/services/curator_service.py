@@ -23,6 +23,7 @@ from utils.tools.search_tool import WebSearchTool
 from utils.tools.user_inputs import UserDataLoggerTool
 from utils.prompts import SYSTEM_PROMPT
 from utils.tools.message_logger import MessageHistoryLoggerTool
+# from utils.tools.pest_detection import PestDetectionTool
 
 nest_asyncio.apply()
 
@@ -435,7 +436,8 @@ if __name__ == "__main__":
         # Define basic tools
         tools = [
             WebSearchTool(), 
-            UserDataLoggerTool()
+            UserDataLoggerTool(),
+            # PestDetectionTool()
         ]
         
         # Initialize the CuratorNode

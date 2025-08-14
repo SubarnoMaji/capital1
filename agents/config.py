@@ -39,7 +39,8 @@ class Config:
     TEXT_EMBEDDING_MODEL = os.getenv("TEXT_EMBEDDING_MODEL")
     IMAGE_EMBEDDING_MODEL = os.getenv("IMAGE_EMBEDDING_MODEL")
 
-    COLLECTION_NAME = "products-data"
+    METADATA_FILE = os.path.join(os.path.dirname(__file__), "curator", "utils", "tools", "retriever", "all_metadata.json")
+    COLLECTION_NAME = "new1"
 
 if __name__=="__main__":
     config = Config()

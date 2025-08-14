@@ -1,18 +1,18 @@
-
 import os
 import sys
 from typing import Optional
 from pydantic import Field
-
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
-from config import Config
 
 import time
 from qdrant_client import QdrantClient, models
 from qdrant_client.models import Distance
 import logging
 
+from retriever.metadata_generator import LLMMetadataSubsetSelector
 from langchain.tools import BaseTool
+
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "../../../../")))
+from agents.config import Config
 
 # Setup logging
 logging.basicConfig(
