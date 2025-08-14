@@ -9,11 +9,17 @@ import concurrent.futures
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from config import Config
+
+from dotenv import load_dotenv
+
+# Use Google Gemini API directly
 import google.generativeai as genai
 
 METADATA_SAVE_DIR = getattr(Config, "METADATA_SAVE_DIR", ".cache/metadata_list")
 Path(METADATA_SAVE_DIR).mkdir(parents=True, exist_ok=True)
 METADATA_LOG_FILE = os.path.join(METADATA_SAVE_DIR, "all_metadata.json")
+
+load_dotenv()
 
 sample_json = {
     "document_type": "farming report",
@@ -22,7 +28,7 @@ sample_json = {
     "year": 2024,
 }
 
-prompt = """
+prompt_template = """
 You are an expert assistant for an agriculture and farming knowledge system.
 
 Analyze the provided document and extract structured metadata relevant to agriculture and farming. Focus on type safety and specificity.
@@ -119,19 +125,22 @@ class MetadataGrouper:
 
 class MetadataGenerator:
     """
-    A class to generate document metadata using Gemini Flash (Google Generative AI).
+    A class to generate document metadata using Google Gemini API directly.
     Only generates metadata for the complete document, not for each chunk.
     Instead of caching, appends all unique generated metadata to a JSON file.
     Optionally groups metadata using MetadataGrouper if use_grouping is True.
     """
-    def __init__(self, use_grouping=False, grouper_kwargs=None):
-        api_key = os.getenv("GOOGLE_API_KEY")
-        if not api_key:
-            raise ValueError("GOOGLE_API_KEY environment variable not set.")
-        
-        genai.configure(api_key=api_key)
-        self.model = genai.GenerativeModel("gemini-1.5-flash-latest")
-        
+    def __init__(self, use_grouping=False, grouper_kwargs=None, model_name=None, google_api_key=None):
+        # Use Google API key from env or config
+        self.google_api_key = google_api_key or os.getenv("GOOGLE_API_KEY") or getattr(Config, "GOOGLE_API_KEY", None)
+        if not self.google_api_key:
+            raise ValueError("GOOGLE_API_KEY environment variable or config not set.")
+
+        self.model_name = model_name or "gemini-2.5-flash-lite"
+
+        genai.configure(api_key=self.google_api_key)
+        self.model = genai.GenerativeModel(self.model_name)
+
         logging.basicConfig(
             format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
             level=logging.INFO,
@@ -148,24 +157,23 @@ class MetadataGenerator:
                 grouper_kwargs = {}
             self.grouper = MetadataGrouper(**grouper_kwargs)
 
-    def generate(self, doc_text, doc_name):
-        content = prompt.format(
+    def _format_prompt(self, doc_text, doc_name):
+        return prompt_template.format(
             doc_text=doc_text,
             doc_name=doc_name,
             sample_json=json.dumps(sample_json, indent=4),
         )
 
+    def generate(self, doc_text, doc_name):
+        content = self._format_prompt(doc_text, doc_name)
+
         try:
-            response = self.model.generate_content(
-                [content],
-                generation_config={
-                    "temperature": 0.0,
-                    "max_output_tokens": 1024,
-                }
-            )
-            enhanced_data = response.text.strip()
+            # Use Gemini API directly
+            response = self.model.generate_content(content)
+            enhanced_data = response.text.strip() if hasattr(response, "text") else response.candidates[0].content.parts[0].text.strip()
+
             enhanced_data = enhanced_data.replace("```json", "").replace("```", "").strip()
-            
+
             try:
                 addn_metadata = json.loads(enhanced_data)
             except json.JSONDecodeError as e:
@@ -211,7 +219,7 @@ class MetadataGenerator:
                     return [addn_metadata]
             else:
                 return addn_metadata
-        
+
         except Exception as e:
             self.logger.error(f"Error generating metadata: {str(e)}")
             return {
@@ -237,4 +245,3 @@ if __name__ == "__main__":
     metadata_generator = MetadataGenerator(use_grouping=True)
     metadata = metadata_generator.generate(doc_text, doc_name)
     print(json.dumps(metadata, indent=4, ensure_ascii=False))
-

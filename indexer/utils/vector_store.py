@@ -8,6 +8,10 @@ import logging
 
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 
+# Import embedding and metadata generator
+from utils.embedding_generator import EmbeddingGenerator
+from utils.metadata_generator import MetadataGenerator
+
 # Setup logging
 logging.basicConfig(
     level=logging.INFO,
@@ -20,6 +24,19 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from config import Config as config
 from utils.file_parser import PDFParser  
 
+def detect_schema_type(value):
+    if isinstance(value, int):
+        return models.PayloadSchemaType.INTEGER
+    elif isinstance(value, float):
+        return models.PayloadSchemaType.FLOAT
+    elif isinstance(value, str):
+        return models.PayloadSchemaType.KEYWORD
+    elif isinstance(value, list):
+        # Assume list of strings for this use case
+        return models.PayloadSchemaType.KEYWORD
+    else:
+        return None  # unsupported
+
 class VectorStore:
     """
     VectorStore is a high-level interface for managing a Qdrant vector database collection
@@ -30,7 +47,7 @@ class VectorStore:
     def __init__(
         self,
         collection_name: str,
-        vector_sizes: Dict[str, int] = {"text_embedding": 384, "image_embedding": 512},
+        vector_sizes: Dict[str, int] = {"text_embedding": 1024, "image_embedding": 512},
         distance: Distance = Distance.COSINE
     ):
         logger.info(f"Initializing VectorStore for collection '{collection_name}'")
@@ -40,6 +57,9 @@ class VectorStore:
         self.distance = distance
         self.text_embedding_model = config.TEXT_EMBEDDING_MODEL
         self.image_embedding_model = config.IMAGE_EMBEDDING_MODEL
+
+        self.embedding_generator = EmbeddingGenerator(model_name=self.text_embedding_model)
+        self.metadata_generator = MetadataGenerator()
 
         self._initialize_collection()
 
@@ -60,6 +80,29 @@ class VectorStore:
         )
         logger.info(f"Collection '{self.collection_name}' created successfully.")
 
+    def _ensure_payload_indexes(self, metadata):
+        """
+        Ensure all fields in the metadata are indexed in Qdrant.
+        """
+        if not metadata:
+            return
+        field_types = {}
+        for k, v in metadata.items():
+            schema_type = detect_schema_type(v)
+            if schema_type and k not in field_types:
+                field_types[k] = schema_type
+
+        for field, schema_type in field_types.items():
+            try:
+                self.client.create_payload_index(
+                    collection_name=self.collection_name,
+                    field_name=field,
+                    field_schema=schema_type
+                )
+                logger.info(f"Index for '{field}' ({schema_type}) created.")
+            except Exception as e:
+                logger.warning(f"Index creation for '{field}' may have failed or already exists: {e}")
+
     def insert_document(
         self,
         text: Optional[str] = None,
@@ -68,17 +111,28 @@ class VectorStore:
         id: Optional[int] = None,
         chunk: bool = False,
         chunk_size: int = 1000,
-        chunk_overlap: int = 200
+        chunk_overlap: int = 200,
+        doc_name: Optional[str] = None
     ):
         """
         Insert a document into the vector store. If chunk=True and text is provided,
         the text will be split into chunks using LangChain's RecursiveCharacterTextSplitter,
         and each chunk will be inserted as a separate point with its own id.
+        Metadata is generated using the MetadataGenerator and all fields are indexed.
         """
         logger.debug(f"Preparing to insert document. Text provided: {bool(text)}, Image provided: {bool(image)}")
         if not text and not image:
             logger.error("Attempted to insert document without text or image.")
             raise ValueError("At least one of `text` or `image` must be provided.")
+
+        # Generate metadata if not provided
+        if metadata is None and text:
+            logger.info("Generating metadata using MetadataGenerator.")
+            metadata = self.metadata_generator.generate(doc_text=text, doc_name=doc_name or "document")
+            logger.info(f"Generated metadata: {metadata}")
+
+        # Ensure all metadata fields are indexed
+        self._ensure_payload_indexes(metadata)
 
         # If chunking is enabled and text is provided, split and insert each chunk
         if chunk and text:
@@ -93,10 +147,13 @@ class VectorStore:
             for idx, chunk_text in enumerate(chunks):
                 vectors = {}
                 logger.debug("Generating text embedding for chunked document.")
-                vectors["text_embedding"] = models.Document(text=chunk_text, model=self.text_embedding_model)
+                # Use embedding generator for text embedding
+                text_emb = self.embedding_generator.encode([chunk_text])[0]
+                vectors["text_embedding"] = text_emb
                 if image:
                     logger.debug("Generating image embedding for document (applies to all chunks).")
-                    vectors["image_embedding"] = models.Image(image=image, model=self.image_embedding_model)
+                    # Placeholder: image embedding logic if needed
+                    vectors["image_embedding"] = [0.0] * self.vector_sizes["image_embedding"]
 
                 payload_data = metadata.copy() if metadata else {}
                 payload_data["text"] = chunk_text
@@ -127,10 +184,12 @@ class VectorStore:
         vectors = {}
         if text:
             logger.debug("Generating text embedding for document.")
-            vectors["text_embedding"] = models.Document(text=text, model=self.text_embedding_model)
+            text_emb = self.embedding_generator.encode([text])[0]
+            vectors["text_embedding"] = text_emb
         if image:
             logger.debug("Generating image embedding for document.")
-            vectors["image_embedding"] = models.Image(image=image, model=self.image_embedding_model)
+            # Placeholder: image embedding logic if needed
+            vectors["image_embedding"] = [0.0] * self.vector_sizes["image_embedding"]
 
         payload_data = metadata.copy() if metadata else {}
         if text:
@@ -190,38 +249,3 @@ class VectorStore:
             for r in results.points
         ]
 
-
-if __name__ == "__main__":
-    
-    documents_dir = os.path.join(os.path.dirname(__file__), "documents")
-    logger.info(f"Looking for PDF documents in directory: {documents_dir}")
-    try:
-        store = VectorStore("products-data")
-        for filename in os.listdir(documents_dir):
-            if filename.lower().endswith(".pdf"):
-                pdf_path = os.path.join(documents_dir, filename)
-                logger.info(f"Processing file: {filename}")
-                try:
-                    parser = PDFParser(pdf_path)
-                    extracted_text = parser.extract_text()
-                    logger.debug(f"Extracted text from {filename}: {extracted_text[:100]}..." if extracted_text else "No text extracted.")
-             
-                    store.insert_document(
-                        text=extracted_text,
-                        metadata={"source": filename},
-                        chunk=True,
-                        chunk_size=1000,  
-                        chunk_overlap=200
-                    )
-                    logger.info(f"Inserted document from {filename} (with chunking)")
-                except FileNotFoundError as e:
-                    logger.error(f"File not found: {e}")
-                    logger.error(f"Please ensure the PDF file '{filename}' exists in the 'documents' folder.")
-                except Exception as e:
-                    logger.error(f"Error processing {filename}: {e}")
-   
-        results = store.query("what did he do in Morgan Stanley?", 3)
-        logger.info(f"Query results: {results}")
-        print(results)
-    except Exception as e:
-        logger.critical(f"Fatal error: {e}")

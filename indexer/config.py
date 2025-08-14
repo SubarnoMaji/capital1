@@ -15,10 +15,10 @@ class Config:
     QDRANT_API_KEY = os.getenv('QDRANT_API_KEY')
 
     # Model Config
-    TEXT_EMBEDDING_MODEL = os.getenv("TEXT_EMBEDDING_MODEL")
+    TEXT_EMBEDDING_MODEL = "Qwen/Qwen3-Embedding-0.6B"
     IMAGE_EMBEDDING_MODEL = os.getenv("IMAGE_EMBEDDING_MODEL")
 
-    COLLECTION_NAME = "products-data"
+    COLLECTION_NAME = "new2"
     
 if __name__ == "__main__":
     print(Config.AWS_ACCESS_KEY_ID)

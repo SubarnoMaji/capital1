@@ -8,7 +8,9 @@ sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), "utils"
 from utils.file_parser import PDFParser
 from utils.vector_store import VectorStore
 from utils.metadata_generator import MetadataGenerator
+from utils.embedding_generator import EmbeddingGenerator
 from config import Config
+from qdrant_client.models import Filter, FieldCondition, Range, MatchValue
 
 logging.basicConfig(
     level=logging.INFO,
@@ -50,12 +52,65 @@ def index_documents(documents_dir, collection_name=Config.COLLECTION_NAME):
                 logger.error(f"Please ensure the PDF file '{filename}' exists in the 'documents' folder.")
             except Exception as e:
                 logger.error(f"Error processing {filename}: {e}")
+    return store  # <-- Ensure the store is returned for later use
 
 if __name__ == "__main__":
     documents_dir = os.path.join(os.path.dirname(__file__), "utils", "documents")
     logger.info(f"Looking for PDF documents in directory: {documents_dir}")
+    
     try:
-        index_documents(documents_dir)
+        store = index_documents(documents_dir)
         logger.info("Indexing complete.")
+
+        # Defensive: Check if store is not None before proceeding
+        if store is None:
+            logger.critical("VectorStore was not initialized properly. Exiting.")
+            sys.exit(1)
+
+        # ---------------- Filtered Query ----------------
+        logger.info("Running filtered query...")
+        filter_conditions = Filter(
+            must=[
+                FieldCondition(
+                    key="year",  # example numeric field in metadata
+                    range=Range(gte=2020)
+                ),
+                FieldCondition(
+                    key="key_entities",  # fixed typo: was "key_entites"
+                    match=MatchValue(value="subarno maji")
+                )
+            ]
+        )
+
+        # Defensive: Check if embedding_generator exists
+        if not hasattr(store, "embedding_generator") or store.embedding_generator is None:
+            logger.critical("VectorStore does not have a valid embedding_generator. Exiting.")
+            sys.exit(1)
+
+        query_vector = store.embedding_generator.encode(
+            ["what did he do in Morgan Stanley?"]
+        )[0]
+
+        results = store.client.query_points(
+            collection_name=store.collection_name,
+            query=query_vector,
+            query_filter=filter_conditions,
+            limit=3,
+            using="text_embedding"
+        ).points
+
+        output = [
+            {
+                "id": r.id,
+                "score": r.score,
+                "text": r.payload.get("text"),
+                "metadata": r.payload
+            }
+            for r in results
+        ]
+
+        logger.info(f"Filtered query results: {output}")
+        print(output)
+
     except Exception as e:
         logger.critical(f"Fatal error: {e}")

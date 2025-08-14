@@ -146,7 +146,7 @@ class LLMMetadataSubsetSelector:
 
 if __name__ == "__main__":
     # Example usage
-    user_query = "i want to dance"
+    user_query = "I want to dance"
     selector = LLMMetadataSubsetSelector()
     relevant_subset = selector.select_relevant_metadata(user_query, max_metadata=5)
     print("Relevant metadata subset:", relevant_subset)
