@@ -24,7 +24,27 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from config import Config as config
 from utils.file_parser import PDFParser  
 
-def detect_schema_type(value):
+# --- Hardcoded schema for payload fields ---
+# All string fields are KEYWORD, year is INTEGER
+HARDCODED_PAYLOAD_SCHEMA = {
+    "document_type": models.PayloadSchemaType.KEYWORD,
+    "key_entities": models.PayloadSchemaType.KEYWORD,
+    "topics": models.PayloadSchemaType.KEYWORD,
+    "year": models.PayloadSchemaType.INTEGER,
+    "text": models.PayloadSchemaType.KEYWORD,
+    "image": models.PayloadSchemaType.KEYWORD,
+    "chunk_index": models.PayloadSchemaType.INTEGER,
+    "chunk_count": models.PayloadSchemaType.INTEGER,
+    "doc_name": models.PayloadSchemaType.KEYWORD,
+}
+
+def detect_schema_type(key, value):
+    # Use hardcoded schema if available
+    if key in HARDCODED_PAYLOAD_SCHEMA:
+        return HARDCODED_PAYLOAD_SCHEMA[key]
+    # Fallback: all strings/lists are KEYWORD, year is int
+    if key == "year":
+        return models.PayloadSchemaType.INTEGER
     if isinstance(value, int):
         return models.PayloadSchemaType.INTEGER
     elif isinstance(value, float):
@@ -32,7 +52,6 @@ def detect_schema_type(value):
     elif isinstance(value, str):
         return models.PayloadSchemaType.KEYWORD
     elif isinstance(value, list):
-        # Assume list of strings for this use case
         return models.PayloadSchemaType.KEYWORD
     else:
         return None  # unsupported
@@ -80,6 +99,18 @@ class VectorStore:
         )
         logger.info(f"Collection '{self.collection_name}' created successfully.")
 
+        # Create payload indexes for all fields in the hardcoded schema
+        for field, schema_type in HARDCODED_PAYLOAD_SCHEMA.items():
+            try:
+                self.client.create_payload_index(
+                    collection_name=self.collection_name,
+                    field_name=field,
+                    field_schema=schema_type
+                )
+                logger.info(f"Index for '{field}' ({schema_type}) created.")
+            except Exception as e:
+                logger.warning(f"Index creation for '{field}' may have failed or already exists: {e}")
+
     def _ensure_payload_indexes(self, metadata):
         """
         Ensure all fields in the metadata are indexed in Qdrant.
@@ -88,7 +119,7 @@ class VectorStore:
             return
         field_types = {}
         for k, v in metadata.items():
-            schema_type = detect_schema_type(v)
+            schema_type = detect_schema_type(k, v)
             if schema_type and k not in field_types:
                 field_types[k] = schema_type
 
@@ -248,4 +279,3 @@ class VectorStore:
             }
             for r in results.points
         ]
-

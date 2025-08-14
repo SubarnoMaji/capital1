@@ -38,10 +38,14 @@ class Config:
     
     TEXT_EMBEDDING_MODEL = os.getenv("TEXT_EMBEDDING_MODEL")
     IMAGE_EMBEDDING_MODEL = os.getenv("IMAGE_EMBEDDING_MODEL")
-
+    QDRANT_INDEXED_FIELDS = ["document_type" ,"key_entities","topics", "year"]
+    
     METADATA_FILE = os.path.join(os.path.dirname(__file__), "curator", "utils", "tools", "retriever", "all_metadata.json")
-    COLLECTION_NAME = "new1"
-
+    COLLECTION_NAME = "new3"
+    HF_GRADIO_EMBEDDING_SPACE="subarnoM/Qwen3-Embedding-0.6B"
+    
+    
+    
 if __name__=="__main__":
     config = Config()
     print("Database URL:", config.DB_URL)

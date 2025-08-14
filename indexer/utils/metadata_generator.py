@@ -28,10 +28,11 @@ sample_json = {
     "year": 2024,
 }
 
+# Updated prompt: only 3-4 broad data, concise, and only 4 keys
 prompt_template = """
 You are an expert assistant for an agriculture and farming knowledge system.
 
-Analyze the provided document and extract structured metadata relevant to agriculture and farming. Focus on type safety and specificity.
+Analyze the provided document and extract only the 3-4 most broad and important pieces of metadata relevant to agriculture and farming. Focus on general categories, not specifics.
 
 <document_name>
 {doc_name}
@@ -41,11 +42,11 @@ Analyze the provided document and extract structured metadata relevant to agricu
 {doc_text}
 </document>
 
-Return the results as a JSON object with the following fields, using lowercase for all string values:
+Return the results as a JSON object with exactly these 4 fields, using lowercase for all string values:
 
-- "document_type" (string): The specific type of document (e.g., "farming report", "crop advisory", "weather bulletin", "market update", "government policy").
-- "key_entities" (list of strings): The most important crops, chemicals, equipment, organizations, or people mentioned.
-- "topics" (list of strings): Main agricultural topics, practices, or issues discussed (e.g., "irrigation", "pest management", "crop yield", "organic farming").
+- "document_type" (string): The broad type of document (e.g., "report", "advisory", "bulletin", "policy").
+- "key_entities" (list of up to 3 strings): The most important crops, organizations, or people mentioned.
+- "topics" (list of up to 3 strings): The main agricultural topics or issues discussed.
 - "year" (integer): The year the document was created or is about.
 
 All text values in the JSON output must be in lowercase.
@@ -56,49 +57,30 @@ Example output:
 Return only the JSON object in the specified format.
 """
 
-
 class MetadataGrouper:
     def __init__(self, fuzzy_threshold=90, max_workers=None):
-        """
-        :param fuzzy_threshold: Similarity threshold (0-100) for grouping.
-        :param max_workers: Number of threads for parallel fuzzy scoring.
-        """
         self.fuzzy_threshold = fuzzy_threshold
         self.max_workers = max_workers
 
     def _cheap_bucket_key(self, metadata):
-        """
-        Bucket metadata to reduce comparisons.
-        Uses first 2 chars of first key_entity + year + topic count.
-        """
         key_entities = metadata.get("key_entities", [])
         first_entity = key_entities[0] if key_entities else ""
         year = metadata.get("year", "")
         return f"{first_entity[:2].lower()}_{len(metadata.get('topics', []))}_{year}"
 
     def _fuzzy_score(self, meta_a, meta_b):
-        """
-        Compute fuzzy similarity using original spacing.
-        """
         str_a = (meta_a.get("document_type", "") + " " +
                  " ".join(meta_a.get("key_entities", []) + meta_a.get("topics", [])))
         str_b = (meta_b.get("document_type", "") + " " +
                  " ".join(meta_b.get("key_entities", []) + meta_b.get("topics", [])))
-
         return fuzz.token_sort_ratio(str_a, str_b)
 
     def group(self, metadata_list):
-        """
-        Group similar metadata objects based on fuzzy matching within buckets.
-        """
-        # Step 1: Bucket metadata to limit comparisons
         buckets = defaultdict(list)
         for md in metadata_list:
             buckets[self._cheap_bucket_key(md)].append(md)
 
         groups = []
-
-        # Step 2: Compare only inside each bucket
         for _, bucket in buckets.items():
             visited = set()
             for i, meta in enumerate(bucket):
@@ -106,7 +88,6 @@ class MetadataGrouper:
                     continue
                 group = [meta]
                 visited.add(i)
-
                 with concurrent.futures.ThreadPoolExecutor(max_workers=self.max_workers) as executor:
                     futures = {
                         executor.submit(self._fuzzy_score, meta, bucket[j]): j
@@ -117,11 +98,8 @@ class MetadataGrouper:
                         if future.result() >= self.fuzzy_threshold:
                             group.append(bucket[j])
                             visited.add(j)
-
                 groups.append(group)
-
         return groups
-
 
 class MetadataGenerator:
     """
@@ -131,7 +109,6 @@ class MetadataGenerator:
     Optionally groups metadata using MetadataGrouper if use_grouping is True.
     """
     def __init__(self, use_grouping=False, grouper_kwargs=None, model_name=None, google_api_key=None):
-        # Use Google API key from env or config
         self.google_api_key = google_api_key or os.getenv("GOOGLE_API_KEY") or getattr(Config, "GOOGLE_API_KEY", None)
         if not self.google_api_key:
             raise ValueError("GOOGLE_API_KEY environment variable or config not set.")
@@ -147,9 +124,7 @@ class MetadataGenerator:
         )
         self.logger = logging.getLogger(__name__)
 
-        # Track unique metadata in memory for this run
         self.seen_metadata = set()
-
         self.use_grouping = use_grouping
         self.grouper = None
         if self.use_grouping:
@@ -164,40 +139,83 @@ class MetadataGenerator:
             sample_json=json.dumps(sample_json, indent=4),
         )
 
+    def _filter_and_merge_unique(self, existing, new_metadata):
+        """
+        Merge new_metadata into existing, ensuring only unique elements for each key.
+        Only the four keys: document_type, key_entities, topics, year.
+        Each value is a list of unique values for that key.
+        """
+        keys = ["document_type", "key_entities", "topics", "year"]
+        # Initialize result dict with empty lists
+        result = {k: [] for k in keys}
+        # Add existing values
+        if isinstance(existing, dict):
+            for k in keys:
+                if k in existing:
+                    if isinstance(existing[k], list):
+                        result[k].extend(existing[k])
+                    elif existing[k] is not None:
+                        result[k].append(existing[k])
+        # Add new values
+        for k in keys:
+            v = new_metadata.get(k)
+            if isinstance(v, list):
+                result[k].extend(v)
+            elif v is not None:
+                result[k].append(v)
+        # Remove duplicates and sort for consistency
+        for k in ["key_entities", "topics"]:
+            result[k] = sorted(list(set([str(x).lower() for x in result[k] if x])))
+        # For document_type and year, keep unique and sorted
+        if result["document_type"]:
+            result["document_type"] = sorted(list(set([str(x).lower() for x in result["document_type"] if x])))
+        if result["year"]:
+            # Only keep unique years as ints
+            result["year"] = sorted(list(set([int(x) for x in result["year"] if str(x).isdigit()])))
+        return result
+
     def generate(self, doc_text, doc_name):
         content = self._format_prompt(doc_text, doc_name)
-
         try:
-            # Use Gemini API directly
             response = self.model.generate_content(content)
             enhanced_data = response.text.strip() if hasattr(response, "text") else response.candidates[0].content.parts[0].text.strip()
-
             enhanced_data = enhanced_data.replace("```json", "").replace("```", "").strip()
-
             try:
                 addn_metadata = json.loads(enhanced_data)
             except json.JSONDecodeError as e:
                 self.logger.error(f"Failed to parse JSON from model output: {enhanced_data}")
                 raise e
 
+            # Only keep the four keys, and lists for all
+            keys = ["document_type", "key_entities", "topics", "year"]
+            filtered_metadata = {}
+            for k in keys:
+                v = addn_metadata.get(k)
+                if k in ["key_entities", "topics"]:
+                    filtered_metadata[k] = [str(x).lower() for x in v] if isinstance(v, list) else []
+                elif k == "document_type":
+                    filtered_metadata[k] = [str(v).lower()] if v else []
+                elif k == "year":
+                    filtered_metadata[k] = [int(v)] if v is not None and str(v).isdigit() else []
+
             # Use a stringified version for uniqueness check
-            metadata_str = json.dumps(addn_metadata, sort_keys=True)
+            metadata_str = json.dumps(filtered_metadata, sort_keys=True)
             if metadata_str not in self.seen_metadata:
                 self.seen_metadata.add(metadata_str)
-                # Save as JSON array, appending new objects
+                # Save as a single JSON object with only unique elements in lists for each key
                 if os.path.exists(METADATA_LOG_FILE):
                     try:
                         with open(METADATA_LOG_FILE, "r", encoding="utf-8") as f:
                             existing = json.load(f)
-                        if not isinstance(existing, list):
-                            existing = []
+                        if not isinstance(existing, dict):
+                            existing = {k: [] for k in keys}
                     except Exception:
-                        existing = []
+                        existing = {k: [] for k in keys}
                 else:
-                    existing = []
-                existing.append(addn_metadata)
+                    existing = {k: [] for k in keys}
+                merged = self._filter_and_merge_unique(existing, filtered_metadata)
                 with open(METADATA_LOG_FILE, "w", encoding="utf-8") as f:
-                    json.dump(existing, f, ensure_ascii=False, indent=4)
+                    json.dump(merged, f, ensure_ascii=False, indent=4)
                 self.logger.info(f"Appended new unique metadata for {doc_name} to {METADATA_LOG_FILE}")
             else:
                 self.logger.info(f"Metadata for {doc_name} already exists in this run, not appending.")
@@ -207,26 +225,21 @@ class MetadataGenerator:
                 try:
                     with open(METADATA_LOG_FILE, "r", encoding="utf-8") as f:
                         all_metadata = json.load(f)
-                    groups = self.grouper.group(all_metadata)
-                    # Find the group containing the current metadata
-                    for group in groups:
-                        if addn_metadata in group:
-                            return group
-                    # If not found, just return the metadata
-                    return [addn_metadata]
+                    # Grouping doesn't make much sense for this format, but return the lists for now
+                    return all_metadata
                 except Exception as e:
                     self.logger.error(f"Error during grouping: {str(e)}")
-                    return [addn_metadata]
+                    return filtered_metadata
             else:
-                return addn_metadata
+                return filtered_metadata
 
         except Exception as e:
             self.logger.error(f"Error generating metadata: {str(e)}")
             return {
-                "document_type": None,
+                "document_type": [],
                 "key_entities": [],
                 "topics": [],
-                "year": None,
+                "year": [],
             }
 
 if __name__ == "__main__":

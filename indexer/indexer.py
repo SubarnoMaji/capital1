@@ -70,14 +70,14 @@ if __name__ == "__main__":
         # ---------------- Filtered Query ----------------
         logger.info("Running filtered query...")
         filter_conditions = Filter(
-            must=[
+            should=[
                 FieldCondition(
-                    key="year",  # example numeric field in metadata
+                    key="year",  
                     range=Range(gte=2020)
                 ),
                 FieldCondition(
-                    key="key_entities",  # fixed typo: was "key_entites"
-                    match=MatchValue(value="subarno maji")
+                    key="key_entities", 
+                    match=MatchValue(value="government of india")
                 )
             ]
         )
@@ -88,7 +88,7 @@ if __name__ == "__main__":
             sys.exit(1)
 
         query_vector = store.embedding_generator.encode(
-            ["what did he do in Morgan Stanley?"]
+            ["how to become a agri scientist"]
         )[0]
 
         results = store.client.query_points(

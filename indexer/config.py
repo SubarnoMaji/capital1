@@ -18,7 +18,7 @@ class Config:
     TEXT_EMBEDDING_MODEL = os.getenv("TEXT_EMBEDDING_MODEL")
     IMAGE_EMBEDDING_MODEL = os.getenv("IMAGE_EMBEDDING_MODEL")
 
-    COLLECTION_NAME = "new2"
+    COLLECTION_NAME = "new3"
     
 if __name__ == "__main__":
     print(Config.AWS_ACCESS_KEY_ID)
