@@ -16,7 +16,7 @@ class ResponseFormatter:
     """
     A class responsible for formatting tool results into agricultural advice and responses.
     It processes raw tool outputs into a user-friendly format and provides
-    summary messages for agent-user interactions.
+    structured responses with agent_message, CTAs, and tasks.
     """
     
     def __init__(self, model, tools):
@@ -24,7 +24,7 @@ class ResponseFormatter:
         Initialize the ResponseFormatter with models and tools.
         
         Args:
-            model: The language model for generating summaries
+            model: The language model for generating responses
             tools: List of tool objects available for use
         """
         self.model = model
@@ -38,7 +38,7 @@ class ResponseFormatter:
             state: Current state of the agent
 
         Returns:
-            Updated agent state with formatted response and curator message
+            Updated agent state with formatted response containing agent_message, CTAs, and tasks
         """
         print("ResponseFormatter: Starting Response Formatter")
         start_time = time.time()
@@ -62,7 +62,7 @@ class ResponseFormatter:
         # Fetch user inputs
         user_inputs = await self._fetch_user_inputs(conversation_id)
         
-        # Generate comprehensive agricultural advice and summary in one call
+        # Generate comprehensive agricultural advice in one call
         message_history = await self._generate_complete_response(
             state, message_history, user_inputs
         )
@@ -70,11 +70,27 @@ class ResponseFormatter:
         # Retrieve final user inputs for the response
         user_inputs = await self._fetch_user_inputs(conversation_id)
         
-        # Update the state with user inputs and summary
-        state["message_from_curator"] = {
-            "user_inputs": user_inputs,
-            "summary": self._extract_summary(message_history[-1])
-        }
+        # Extract the response from the last AI message
+        last_ai_message = message_history[-1]
+        try:
+            response_content = last_ai_message.content.replace('```json', '').replace('```', '').strip()
+            parsed_response = json.loads(response_content)
+            
+            # Update the state with the complete response format
+            state["message_from_curator"] = {
+                "user_inputs": user_inputs,
+                "agent_message": parsed_response.get("agent_message", ""),
+                "CTAs": parsed_response.get("CTAs", []),
+                "tasks": parsed_response.get("tasks", "")
+            }
+        except (json.JSONDecodeError, AttributeError):
+            # Fallback if parsing fails
+            state["message_from_curator"] = {
+                "user_inputs": user_inputs,
+                "agent_message": last_ai_message.content,
+                "CTAs": [],
+                "tasks": ""
+            }
         
         # Update message history in state
         state["message_history"] = message_history
@@ -136,8 +152,6 @@ class ResponseFormatter:
         # Streamlined single prompt focused on agent message output
         message_history.append(
             HumanMessage(content=f"""
-            Analyze the tool results above and provide a comprehensive agricultural advice response to the user.
-
             User Query: {state['message_to_curator']['query']}
 
             User Context: {json.dumps(user_inputs, indent=2) if user_inputs else "No additional context available"}
@@ -146,7 +160,7 @@ class ResponseFormatter:
             {{
                 "agent_message": "Your comprehensive agricultural advice here",
                 "CTAs": ["Follow-up question 1", "Follow-up question 2", "Follow-up question 3"],
-                "conversation_caption": "Brief caption (max 8 words)"
+                "tasks": "Specific tasks or actions assigned to the farmer based on the current context. Leave empty string if none."
             }}
 
             For the agent_message, include:
@@ -158,6 +172,11 @@ class ResponseFormatter:
             Try to keep the response length in check, within 70-150 words, would suffice.
 
             CTAs should be logical follow-up questions the user might ask based on your advice.
+            
+            For tasks:
+            • Only assign when contextually necessary and valuable
+            • Use empty string "" when no specific tasks are needed
+            • Make tasks specific and actionable when assigned
             """)
         )
         
@@ -169,14 +188,3 @@ class ResponseFormatter:
         
         return message_history
     
-    def _extract_summary(self, summary_response: BaseMessage) -> str:
-        """
-        Extract the summary content from the response.
-        
-        Args:
-            summary_response: The message containing the summary
-            
-        Returns:
-            Cleaned summary content as a string
-        """
-        return summary_response.content.replace('```json','').replace('```','').strip()

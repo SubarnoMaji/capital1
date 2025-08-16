@@ -118,14 +118,10 @@ class QueryRouter:
         message_history.append(
             HumanMessage(
                 content=f"""
-                Now based on the above context as well as your response to the questions, write your final response in the format below:
-                {{"agent_message": "A well articulated message along the guidelines suggested", "CTAs": "A comma-separated list (i.e. within square brackets) of prescribed CTAs as per instructions.", "tool_calls": "required tool calls", "conversation_caption": "A short caption, less than 10 words, for the conversation. If this is a new conversation, create a new caption. If continuing the same topic, use the previous caption."}}
-                
                 Note: 
                 1. Output the CTAs as a proper list like [...], not '[...]'
-                2. Caption should be same, if there is no major change in the direction of the conversation
-                3. Always include the conversation_caption field in your response
-                4. If you don't have a previous caption, create a new one based on the current conversation topic
+                2. Always include the tasks field in your response
+                3. Only assign tasks when contextually necessary and valuable - use empty string "" when no specific tasks are needed
 
                 You have `WebSearchTool`, `UserDataLoggerTool`, `WeatherAnalysisTool`, `PriceFetcherTool` and `RetrievalTool` at your disposal.
 
@@ -135,14 +131,14 @@ class QueryRouter:
                 -- For general enquiries about agricultural best practices, crop selection, soil health, pest management, weather conditions, or government schemes, do not use the `WebSearchTool`. Instead, answer directly to the best of your knowledge or use other relevant tools as appropriate.
 
                 -- Tool Descriptions:
-                   - `UserDataLoggerTool`: Log and manage user agricultural inputs, such as crop details, farmland information, and user preferences. Use this tool to store, retrieve, or update user data [ONLY THE DATA WHICH IS GIVEN BY THE USER]
-                   - `WebSearchTool`: Search the web for up-to-date agricultural information, news, or resources relevant to specific queries about crops, locations, or farming techniques.
-                   - `WeatherAnalysisTool`: Retrieve current and forecasted weather data for a given location to assist with agricultural planning and decision-making.
-                   - `PriceFetcherTool`: Get live mandi prices for various commodities in various locations around India, with state level, district level and daywise filters.
-                   - `RetrievalTool`: Retrieve previously stored information or documents relevant to the user's agricultural queries or history.
+                - `UserDataLoggerTool`: Log and manage user agricultural inputs, such as crop details, farmland information, and user preferences. Use this tool to store, retrieve, or update user data [ONLY THE DATA WHICH IS GIVEN BY THE USER]
+                - `WebSearchTool`: Search the web for up-to-date agricultural information, news, or resources relevant to specific queries about crops, locations, or farming techniques.
+                - `WeatherAnalysisTool`: Retrieve current and forecasted weather data for a given location to assist with agricultural planning and decision-making.
+                - `PriceFetcherTool`: Get live mandi prices for various commodities in various locations around India, with state level, district level and daywise filters.
+                - `RetrievalTool`: Retrieve previously stored information or documents relevant to the user's agricultural queries or history.
 
                 IMPORTANT: 
-                - When there are tool calls except [UserDataLoggerTool], please AVOID generating "agent_message", "CTAs", "conversation_caption", as it would be generated later in a different process.
+                - When there are tool calls except [UserDataLoggerTool], please AVOID generating "agent_message", "CTAs", "tasks", as it would be generated later in a different process.
                 - When there is singularly UserDataLoggerTool, generate all of the above [MANDATORILY]
                 """,
                 name="user"

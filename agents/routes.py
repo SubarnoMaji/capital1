@@ -18,23 +18,24 @@ from curator.services.curator_service import CuratorNode
 from curator.utils.tools.search_tool import WebSearchTool
 from curator.utils.tools.message_logger import MessageHistoryLoggerTool
 from agents.curator.utils.tools.user_inputs import UserDataLoggerTool
+from agents.curator.utils.tools.retrieval_tool import RetrievalTool
+from agents.curator.utils.tools.price_fetcher import PriceFetcherTool
+from agents.curator.utils.tools.weather_tool import WeatherAnalysisTool
 # from agents.curator.utils.tools.pest_detection import PestDetectionTool
 
 router = APIRouter(prefix="/api/agent")
 
 # Define request and response models
 class CuratorRequest(BaseModel):
-    query: str = Field(..., description="User query for travel recommendations")
+    query: str = Field(..., description="User query for agricultural advice")
     conversation_id: str = Field(..., description="Unique identifier for the conversation")
     inputs: Optional[Dict] = Field(None, description="User inputs for the query")
 
 class CuratorResponse(BaseModel):
     user_inputs: Dict[str, Any] = Field(..., description="User inputs extracted from the query")
-    suggestions: Dict[str, Any] = Field(..., description="Curated travel suggestions")
     agent_message: str = Field(..., description="Agent's response message")
     CTAs: List[str] = Field(..., description="Call-to-action suggestions")
-    plan_gen_flag: str = Field(..., description="Flag indicating if a plan should be generated")
-    conversation_caption: str = Field(..., description="Caption for the conversation")
+    tasks: str = Field(..., description="Specific tasks or actions assigned to the farmer")
 
 # Initialize the model and tools
 def get_curator():
@@ -49,6 +50,9 @@ def get_curator():
         WebSearchTool(),
         UserDataLoggerTool(),
         MessageHistoryLoggerTool(),
+        RetrievalTool(),
+        PriceFetcherTool(),
+        WeatherAnalysisTool()
         # PestDetectionTool()
     ]
     
@@ -63,15 +67,14 @@ async def curate(
     curator: CuratorNode = Depends(get_curator)
 ):
     """
-    Endpoint to get curated travel suggestions based on user query.
+    Endpoint to get curated agricultural advice based on user query.
     
     Args:
         request: CuratorRequest containing the user query and conversation ID
-        background_tasks: FastAPI background tasks
         curator: CuratorNode instance (injected by FastAPI)
         
     Returns:
-        CuratorResponse containing curated suggestions and agent message
+        CuratorResponse containing agricultural advice and agent message
     """
     try:
         # Call the curator service
@@ -79,9 +82,10 @@ async def curate(
         
         # Return the result
         return CuratorResponse(
+            user_inputs=result.get("user_inputs", {}),
             agent_message=result.get("agent_message", ""),
             CTAs=result.get("CTAs", []),
-            conversation_caption=result.get("conversation_caption", "")
+            tasks=result.get("tasks", "")
         )
     except Exception as e:
         # Log the error and return a 500 error
