@@ -19,6 +19,7 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 # Supported collections
 messages = MESSAGE
 user_inputs = USER_INPUTS
+tasks = TASKS
 
 # Initialize the FastAPI app
 app = FastAPI()
@@ -50,7 +51,7 @@ async def get_data(
     )
 
     # Validate collection name
-    if collection_name not in [messages, user_inputs]:
+    if collection_name not in [messages, user_inputs, tasks]:
         logger.error(f"Invalid collection_name={collection_name} for _id={_id}")
         raise HTTPException(status_code=400, detail="Invalid collection_name")
 
@@ -93,7 +94,7 @@ async def post_data(collection_name: str, _id: str, data: dict = Body(...)):
     )
 
     # Validate collection name
-    valid_collections = [messages, user_inputs]
+    valid_collections = [messages, user_inputs, tasks]
     if collection_name not in valid_collections:
         logger.error(f"Invalid collection_name={collection_name} for _id={_id}")
         raise HTTPException(
@@ -140,27 +141,34 @@ async def post_data(collection_name: str, _id: str, data: dict = Body(...)):
         logger.error(f"Error posting data for _id={_id}: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Database error: {str(e)}")
 
-
 @app.put("/api/data")
 async def put_data(
     collection_name: str,
     _id: str,
     key: str,
+    task_id: Optional[str] = None,
     data: Any = Body(...),
 ):
-
     logger = get_logger(_id)
     logger.info(
-        f"PUT /api/data called with collection_name={collection_name}, _id={_id}, key={key}"
+        f"PUT /api/data called with collection_name={collection_name}, _id={_id}, key={key}, task_id={task_id}"
     )
 
     # Validate collection name
-    valid_collections = [user_inputs]
+    valid_collections = [user_inputs, tasks]
     if collection_name not in valid_collections:
         logger.error(f"Invalid collection_name={collection_name} for _id={_id}")
         raise HTTPException(
             status_code=400,
             detail=f"Invalid collection_name. Must be one of {valid_collections}",
+        )
+    
+    # Validate task_id is provided when updating tasks collection
+    if collection_name == tasks and not task_id:
+        logger.error("task_id is required when updating tasks collection")
+        raise HTTPException(
+            status_code=400,
+            detail="task_id is required when updating tasks collection"
         )
 
     try:
@@ -177,64 +185,121 @@ async def put_data(
                 status_code=404, detail=f"Document with _id {_id} not found"
             )
 
-        # Define valid keys for user_inputs
-        valid_user_input_keys = [
-            "user_inputs",  # For updating the whole object
-            "location",
-            "land_size", 
-            "soil_type",
-            "water_source",
-            "budget",
-            "experience_level",
-            "crop_preferences",
-            "current_crops",
-            "farming_season",
-            "challenges",
-            "goals",
-        ]
+        if collection_name == user_inputs:
+            # Define valid keys for user_inputs
+            valid_user_input_keys = [
+                "user_inputs",  # For updating the whole object
+                "location",
+                "land_size", 
+                "soil_type",
+                "water_source",
+                "budget",
+                "experience_level",
+                "crop_preferences",
+                "current_crops",
+                "farming_season",
+                "challenges",
+                "goals",
+            ]
 
-        # Validate key
-        if key not in valid_user_input_keys:
-            logger.error(
-                f"Invalid key={key} for user_inputs in collection {collection_name}"
-            )
-            raise HTTPException(
-                status_code=400,
-                detail=f"Invalid key for user_inputs. Must be one of {valid_user_input_keys}",
-            )
+            # Validate key
+            if key not in valid_user_input_keys:
+                logger.error(
+                    f"Invalid key={key} for user_inputs in collection {collection_name}"
+                )
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Invalid key for user_inputs. Must be one of {valid_user_input_keys}",
+                )
 
-        # If key is "user_inputs", replace the entire user_inputs object
-        if key == "user_inputs":
-            # Validate that all keys in the data are allowed
-            if isinstance(data, dict):
-                invalid_keys = [
-                    k for k in data.keys() if k not in valid_user_input_keys[1:]
-                ]
-                if invalid_keys:
-                    logger.error(f"Invalid keys in user_inputs: {invalid_keys}")
-                    raise HTTPException(
-                        status_code=400,
-                        detail=f"Invalid keys in user_inputs: {invalid_keys}. Valid keys are: {valid_user_input_keys[1:]}",
-                    )
-            existing_doc["user_inputs"] = data
-        else:
-            # Check if user_inputs exists, create if not
-            if "user_inputs" not in existing_doc:
-                existing_doc["user_inputs"] = {}
+            # If key is "user_inputs", replace the entire user_inputs object
+            if key == "user_inputs":
+                # Validate that all keys in the data are allowed
+                if isinstance(data, dict):
+                    invalid_keys = [
+                        k for k in data.keys() if k not in valid_user_input_keys[1:]
+                    ]
+                    if invalid_keys:
+                        logger.error(f"Invalid keys in user_inputs: {invalid_keys}")
+                        raise HTTPException(
+                            status_code=400,
+                            detail=f"Invalid keys in user_inputs: {invalid_keys}. Valid keys are: {valid_user_input_keys[1:]}",
+                        )
+                existing_doc["user_inputs"] = data
+            else:
+                # Check if user_inputs exists, create if not
+                if "user_inputs" not in existing_doc:
+                    existing_doc["user_inputs"] = {}
 
-            # Update specific field within user_inputs
-            existing_doc["user_inputs"][key] = data
+                # Update specific field within user_inputs
+                existing_doc["user_inputs"][key] = data
 
-        # Replace the entire document with the updated version
-        result = collection.replace_one({"_id": obj_id}, existing_doc)
+            # Replace the entire document with the updated version
+            result = collection.replace_one({"_id": obj_id}, existing_doc)
 
-        if result.matched_count == 0:
-            logger.error(
-                f"Failed to update document in {collection_name} for _id={_id}"
-            )
-            raise HTTPException(status_code=500, detail="Failed to update document")
+            if result.matched_count == 0:
+                logger.error(
+                    f"Failed to update document in {collection_name} for _id={_id}"
+                )
+                raise HTTPException(status_code=500, detail="Failed to update document")
 
-        return {"status": "success", "timestamp": datetime.now().isoformat()}
+            return {"status": "success", "timestamp": datetime.now().isoformat()}
+
+        elif collection_name == tasks:
+            # For tasks, expect key to be "tasks" and task_id to identify the specific task
+            if key != "tasks":
+                logger.error(f"For tasks collection, key must be 'tasks', got {key}")
+                raise HTTPException(
+                    status_code=400,
+                    detail="For tasks collection, key must be 'tasks'"
+                )
+            
+            if not task_id:
+                logger.error("task_id is required when updating tasks")
+                raise HTTPException(
+                    status_code=400,
+                    detail="task_id is required when updating tasks"
+                )
+            
+            if not isinstance(data, str):
+                logger.error(f"Status update for task must be a string, got {type(data)}")
+                raise HTTPException(
+                    status_code=400,
+                    detail="Status update for task must be a string."
+                )
+            
+            if "tasks" not in existing_doc or not isinstance(existing_doc["tasks"], list):
+                logger.error(f"No tasks array found in document with _id={_id}")
+                raise HTTPException(
+                    status_code=404,
+                    detail=f"No tasks array found in document with _id={_id}"
+                )
+            
+            # Find the task with the given task_id
+            task_found = False
+            for task in existing_doc["tasks"]:
+                if task.get("task_id") == task_id:
+                    task["status"] = data
+                    task_found = True
+                    break
+            
+            if not task_found:
+                logger.error(f"Task with task_id={task_id} not found in document with _id={_id}")
+                raise HTTPException(
+                    status_code=404,
+                    detail=f"Task with task_id={task_id} not found in document with _id={_id}"
+                )
+            
+            # Replace the entire document with the updated version
+            result = collection.replace_one({"_id": obj_id}, existing_doc)
+
+            if result.matched_count == 0:
+                logger.error(
+                    f"Failed to update task in {collection_name} for _id={_id}"
+                )
+                raise HTTPException(status_code=500, detail="Failed to update task status")
+
+            return {"status": "success", "timestamp": datetime.now().isoformat()}
 
     except HTTPException:
         raise
