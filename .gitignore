@@ -6,7 +6,8 @@ usecases/pest-detection/ip102_v1.1
 usecases/pest-detection/src
 # C extensions
 *.so
-
+indexer/utils/documents
+.env
 env/
 # Distribution / packaging
 build/
@@ -53,6 +54,7 @@ cython_debug/
 
 # Logs
 *.log
+logs/
 
 # OS
 .DS_Store

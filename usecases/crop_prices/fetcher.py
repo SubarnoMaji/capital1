@@ -2,11 +2,11 @@ import requests
 import os
 import json
 from typing import Optional
-from utils.fuzzy import FuzzyMatcher
-from utils.url_builder import AgmarknetURLBuilder
-from utils.html_parser import AgmarknetHTMLParser
+from usecases.crop_prices.utils.fuzzy import FuzzyMatcher
+from usecases.crop_prices.utils.url_builder import AgmarknetURLBuilder
+from usecases.crop_prices.utils.html_parser import AgmarknetHTMLParser
 
-from config import Config as config
+from usecases.crop_prices.config import Config as config
 
 class CropPriceFetcher:
     def __init__(self):
