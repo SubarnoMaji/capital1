@@ -62,13 +62,10 @@ class ResponseFormatter:
         # Fetch user inputs
         user_inputs = await self._fetch_user_inputs(conversation_id)
         
-        # Generate agricultural advice using the model
-        message_history = await self._generate_agricultural_advice(
+        # Generate comprehensive agricultural advice and summary in one call
+        message_history = await self._generate_complete_response(
             state, message_history, user_inputs
         )
-        
-        # Generate summary message
-        message_history = await self._generate_summary(message_history)
         
         # Retrieve final user inputs for the response
         user_inputs = await self._fetch_user_inputs(conversation_id)
@@ -121,12 +118,12 @@ class ResponseFormatter:
                 
         return user_inputs
     
-    async def _generate_agricultural_advice(self, 
-                                           state: Dict[str, Any],
-                                           message_history: List[BaseMessage],
-                                           user_inputs: Dict) -> List[BaseMessage]:
+    async def _generate_complete_response(self, 
+                                         state: Dict[str, Any],
+                                         message_history: List[BaseMessage],
+                                         user_inputs: Dict) -> List[BaseMessage]:
         """
-        Generate agricultural advice using the model.
+        Generate a complete agricultural advice response in a single call.
         
         Args:
             state: Current agent state
@@ -134,69 +131,41 @@ class ResponseFormatter:
             user_inputs: User inputs for context
             
         Returns:
-            Updated conversation history with agricultural advice response
+            Updated conversation history with complete response
         """
-        # Add task results for formatting
+        # Streamlined single prompt focused on agent message output
         message_history.append(
             HumanMessage(content=f"""
-            Please analyze the tool results above and provide comprehensive agricultural advice based on the user's query and context. 
+            Analyze the tool results above and provide a comprehensive agricultural advice response to the user.
 
-            User Query:
-            {state['message_to_curator']['query']}
+            User Query: {state['message_to_curator']['query']}
 
-            Current User Requirements:
-            {json.dumps(user_inputs, indent=2)}
+            User Context: {json.dumps(user_inputs, indent=2) if user_inputs else "No additional context available"}
 
-            Guidelines:
-            - Provide practical, actionable agricultural advice
-            - Focus on the specific crops, soil types, or farming techniques mentioned
-            - Include relevant information about weather conditions, pest management, or soil health
-            - Consider local agricultural practices and government schemes if applicable
-            - Structure the advice in a clear, organized manner
-            - Include any relevant references or sources if available
-            - Try to include as much information as possible from the tool results
+            Respond in this exact JSON format:
+            {{
+                "agent_message": "Your comprehensive agricultural advice here",
+                "CTAs": ["Follow-up question 1", "Follow-up question 2", "Follow-up question 3"],
+                "conversation_caption": "Brief caption (max 8 words)"
+            }}
 
-            Format your response as a comprehensive agricultural advice message that directly addresses the user's query.
-            """)
-        )
-        
-        # Get agricultural advice
-        advice_response = self.model.invoke(message_history)
-        
-        # Add advice response to message history
-        message_history.append(advice_response)
-        
-        return message_history
-    
-    async def _generate_summary(self, message_history: List[BaseMessage]) -> List[BaseMessage]:
-        """
-        Generate a summary message for the user.
-        
-        Args:
-            message_history: Conversation history
+            For the agent_message, include:
+            • Practical, actionable response based on tool results
+            • Specific recommendations for crops, soil, weather, or pest management (if relevant)
+            • Local practices and government schemes (if relevant)
             
-        Returns:
-            Updated conversation history with summary response
-        """
-        # Add summary request to message history
-        message_history.append(
-            HumanMessage(content=f"""
-            Now that you have provided agricultural advice, write a final message that summarizes the key points and offers next steps for the user.
+            Maintain a warm, friendly tone throughout the length of the conversation
+            Try to keep the response length in check, within 70-150 words, would suffice.
 
-            Additionally, you should also offer them 3 CTAs to help them continue their agricultural journey. These must be logical queries/feedback that the user might have based on your response.
-
-            Your response should be in the following format:
-            {{"agent_message": "A well articulated summary message with the key agricultural advice points", "CTAs": "A comma-separated list (i.e. within square brackets) of the three prescribed CTAs", "conversation_caption": "A short caption, less than 10 words, for the conversation. If this is a new conversation, create a new caption. If continuing the same topic, use the previous caption."}}.
-
-            Make sure that the tone of your final message is friendly and warm. Focus on summarizing the key agricultural advice and providing clear next steps.
+            CTAs should be logical follow-up questions the user might ask based on your advice.
             """)
         )
         
-        # Get summary message
-        summary_response = self.model.invoke(message_history)
+        # Get complete response in one call
+        complete_response = self.model.invoke(message_history)
         
-        # Add summary response to message history
-        message_history.append(summary_response)
+        # Add response to message history
+        message_history.append(complete_response)
         
         return message_history
     

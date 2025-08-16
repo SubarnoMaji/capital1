@@ -98,33 +98,33 @@ class LLMMetadataSubsetSelector:
             candidate_metadata[key] = candidate_metadata[key][:30]
 
         prompt = f"""
-You are an expert assistant for an agriculture and farming knowledge system.
+        You are an expert assistant for an agriculture and farming knowledge system.
 
-Given the following user query and a metadata dictionary (with keys like "document_type", "key_entities", "topics", "year", each mapping to a list of possible values), select the most relevant metadata key-value pairs for answering the query.
+        Given the following user query and a metadata dictionary (with keys like "document_type", "key_entities", "topics", "year", each mapping to a list of possible values), select the most relevant metadata key-value pairs for answering the query.
 
-<user_query>
-{user_query}
-</user_query>
+        <user_query>
+        {user_query}
+        </user_query>
 
-<all_metadata>
-{json.dumps(candidate_metadata, ensure_ascii=False, indent=2)}
-</all_metadata>
+        <all_metadata>
+        {json.dumps(candidate_metadata, ensure_ascii=False, indent=2)}
+        </all_metadata>
 
-**Instructions:**
-- Carefully read the user query and the metadata values.
-- For each field, select the most relevant values (at most {max_metadata} in total, across all fields).
-- Return the output as a JSON array of objects, where each object contains a single key-value pair, e.g. [{{"year": 2021}}, {{"topic": "agriculture"}}].
-- Do not include any explanation or extra text.
-- If none are relevant, return an empty list.
-- Preserve the original value format.
+        **Instructions:**
+        - Carefully read the user query and the metadata values.
+        - For each field, select the most relevant values (at most {max_metadata} in total, across all fields).
+        - Return the output as a JSON array of objects, where each object contains a single key-value pair, e.g. [{{"year": 2021}}, {{"topic": "agriculture"}}].
+        - Do not include any explanation or extra text.
+        - If none are relevant, return an empty list.
+        - Preserve the original value format.
 
-Example output:
-[
-  {{"year": 2024}},
-  {{"topics": "agricultural research"}},
-  {{"document_type": "annual report"}}
-]
-"""
+        Example output:
+        [
+            {{"year": 2024}},
+            {{"topics": "agricultural research"}},
+            {{"document_type": "annual report"}}
+        ]
+        """
         response = self._llm.invoke([{"role": "user", "content": prompt}])
         content = response.content.strip()
         # Remove code block markers if present

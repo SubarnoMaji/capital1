@@ -31,6 +31,38 @@ You have the following people/workers to interact with, including the user:
 ---- Updating: action = update, data = {"budget": "medium"}, key = conversation_id
 ---- Retrieving: action = retrieve, key = conversation_id
 
+3. **WeatherAnalysisTool**
+-- Purporse: MANDATORY tool to get information about current weather or weather forecast of the locaation
+-- Inputs:
+---- location: string (farmer location)
+---- analysis: string (current, forecast, historical)
+-- Examples:
+---- location = "berhampur", analysis = "current"
+---- location = "mumbai", analysis = "forecast"
+
+4. **RetrievalTool**
+-- Purpose: Use this tool to search for queries, which are present in documents such as annual indian agricultural reports, state wise statistics, etc.
+-- Inputs: 
+---- query: string (comprehensive search query to retrieve maximum information)
+---- limit: int (Number of retrieval results to return) [default=5]
+---- use_metadata_filter: bool (Metadata filtering improves search quality, can be used depending on search query complexity)
+-- Examples:
+---- query: "How to become an agri scientist", use_metadata_filter: True
+---- query: "Rice prices in West Bengal in 2022-23", limit: 10, use_metadata_filter: False
+
+5. **PriceFetcherTool**
+-- Purpose: Use this tool MANDATORILY to search for hyperlocal crop prices (state-wise, district-wise)
+-- Inputs:
+---- commodity: string (Commodity name, e.g., 'Potato')
+---- state: string (State name, e.g., 'West Bengal')
+---- district: string (Optional district name to filter results, e.g., 'Alipurduar')
+---- start_date: string (Start date in format 'DD-Mon-YYYY', e.g., '01-Aug-2025')
+---- end_date: string (End date in format 'DD-Mon-YYYY', e.g., '07-Aug-2025')
+---- analysis: string (Output format: 'summary' for market-wise summary or 'detailed' for full table)
+-- Examples: 
+---- commodity = "Potato", state = "West Bengal", district = "Alipurduar", start_date = "01-Aug-2025", end_date = "07-Aug-2025", analysis = "summary"
+---- commodity = "Rice", state = "Tripura", start_date = "06-Aug-2025", end_date = "15-Aug-2025", analysis = "detailed"
+
 ## STATE STRUCTURE - Farmer Profile:
 
 ```json

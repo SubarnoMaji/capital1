@@ -85,28 +85,23 @@ class QueryRouter:
         message_history.append(
             HumanMessage(
                 content=f"""
-                Latest User Query:
-                {query}
+                Latest User Query: {query}
+                Conversation ID: {conversation_id}
+                User Persona: {json.dumps(merged_user_inputs, indent=2)}
 
-                Conversation ID:
-                {conversation_id}
+                Analyze and respond with YES/NO only:
 
-                Persona provided by user to about himself and his agricultural land:
-                {json.dumps(merged_user_inputs, indent=2)}
+                1. Specific place mentioned? 
+                2. Asking for location-specific advice? 
+                3. Crops/soil/weather mentioned? 
+                4. Government schemes query? 
+                5. Pest/irrigation/organic practices? 
+                6. Land/resource info updated? 
+                7. Market/post-harvest query? 
+                8. Expert/community connection needed? 
+                9. User inputs changed?
 
-                Before writing your final response, analyse the latest query and the current scenario (provided above) carefully and then answer the following questions only
-                1. Has the user explicitly mentioned a specific place (place/city) of his farmland in this query or earlier in the conversation? (yes/no)
-                2. In their latest query, does the user seem to be asking (directly/indirectly) for suggestions or advice related to a specific place, farm, or crop of interest? Or are they making general enquiries about agricultural practices, crop selection, soil health, pest management, or weather/climate conditions for farming? // Only if the former, then while writing the final response, use the `WebSearchTool` to curate suggestions or provide relevant information.
-                3. If the user has mentioned any specific crops, soil types, weather conditions, or farming techniques, highlight these in your analysis.
-                4. Check if the user is seeking advice on government schemes, subsidies, or agricultural policies relevant to their region.
-                5. Consider if the user is asking about pest/disease management, irrigation methods, or sustainable/organic farming practices.
-                6. If the user has provided or updated information about their land size, crop cycle, or resource availability (e.g., water, equipment), note these changes.
-                7. If the user is requesting market price information, supply chain advice, or post-harvest management tips, mention this.
-                8. If the user is interested in connecting with local experts, agricultural extension services, or farmer communities, include this in your response.
-                
-                Note: Check that if there been any change in the user inputs, if you notice any changes, that means, the user has modified that particular input, and you need to work on that, and provide a clarification message that you have noticed the change as well.
-
-                Give only the response to the above questions, in a bullet point format.
+                Format: 1:YES 2:NO 3:YES... (single line)
                 """,
                 name="user"
             )
@@ -132,22 +127,23 @@ class QueryRouter:
                 3. Always include the conversation_caption field in your response
                 4. If you don't have a previous caption, create a new one based on the current conversation topic
 
-                You have `WebSearchTool`, `UserDataLoggerTool`, `WeatherAnalysisTool`, `SoilInfoTool`, `PestDetectionTool` and `RetrievalTool` at your disposal.
+                You have `WebSearchTool`, `UserDataLoggerTool`, `WeatherAnalysisTool`, `PriceFetcherTool` and `RetrievalTool` at your disposal.
 
                 Note:
                 -- In the latest user query, take particular note of any newly provided (or updated) User Persona information regarding their crops, farmland, or agricultural practices. Use the `UserDataLoggerTool` to store or update these agricultural inputs as needed.
-
                 -- Use the `WebSearchTool` to curate suggestions or provide information only if the user is enquiring about specific agricultural locations, crops, or farming techniques that require external information or up-to-date resources.
-
                 -- For general enquiries about agricultural best practices, crop selection, soil health, pest management, weather conditions, or government schemes, do not use the `WebSearchTool`. Instead, answer directly to the best of your knowledge or use other relevant tools as appropriate.
 
                 -- Tool Descriptions:
-                   - `UserDataLoggerTool`: Log and manage user agricultural inputs, such as crop details, farmland information, and user preferences. Use this tool to store, retrieve, or update user data.
+                   - `UserDataLoggerTool`: Log and manage user agricultural inputs, such as crop details, farmland information, and user preferences. Use this tool to store, retrieve, or update user data [ONLY THE DATA WHICH IS GIVEN BY THE USER]
                    - `WebSearchTool`: Search the web for up-to-date agricultural information, news, or resources relevant to specific queries about crops, locations, or farming techniques.
                    - `WeatherAnalysisTool`: Retrieve current and forecasted weather data for a given location to assist with agricultural planning and decision-making.
-                   - `SoilInfoTool`: Provide information about soil types, soil health, and recommendations for soil management based on user location or input.
-                   - `PestDetectionTool`: Assist in identifying pests or diseases affecting crops and suggest possible management or treatment options.
+                   - `PriceFetcherTool`: Get live mandi prices for various commodities in various locations around India, with state level, district level and daywise filters.
                    - `RetrievalTool`: Retrieve previously stored information or documents relevant to the user's agricultural queries or history.
+
+                IMPORTANT: 
+                - When there are tool calls except [UserDataLoggerTool], please AVOID generating "agent_message", "CTAs", "conversation_caption", as it would be generated later in a different process.
+                - When there is singularly UserDataLoggerTool, generate all of the above [MANDATORILY]
                 """,
                 name="user"
             )
