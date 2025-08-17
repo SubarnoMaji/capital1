@@ -1,18 +1,19 @@
 from typing import Type
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, PrivateAttr
 from langchain.tools import BaseTool
 from tavily import TavilyClient
 
 import os
 import sys
 
-# Add the parent directory (project root) to the Python path
+
+# Ensure config import works regardless of working directory
 sys.path.append(
-    os.path.abspath(os.path.join(os.path.dirname(__file__), "../../../.."))
+    os.path.abspath(os.path.join(os.path.dirname(__file__), "../../../../"))
 )
 
-from agents.config import Config as config
-from pydantic import PrivateAttr
+from agents.config import Config
+
 
 class WebSearchInput(BaseModel):
     query: str = Field(..., description="Search query")
@@ -29,8 +30,16 @@ class WebSearchTool(BaseTool):
     _client: TavilyClient = PrivateAttr(default=None)
 
     def __init__(self, *args, **kwargs):
+        # The line `api_key = getattr(Config, "TAVILY_API_KEY", None)` is attempting to retrieve the
+        # value of the attribute `TAVILY_API_KEY` from the `Config` class.
         super().__init__(*args, **kwargs)
-        api_key = getattr(config, "TAVILY_API_KEY", None)
+        api_key = getattr(Config, "TAVILY_API_KEY", None)
+        
+        if not api_key:
+            raise ValueError(
+                "No Tavily API key provided. Please set the TAVILY_API_KEY environment variable "
+                "or add it to your .env file. See the error traceback for more details."
+            )
         self._client = TavilyClient(api_key)
 
     def _run(self, **kwargs) -> str:
@@ -112,7 +121,11 @@ if __name__ == "__main__":
     import json
 
     async def test_search():
-        tool = WebSearchTool()
+        try:
+            tool = WebSearchTool()
+        except Exception as e:
+            print(f"Error initializing WebSearchTool: {e}")
+            return
         # Example query
         query = "latest news in artificial intelligence"
         k = 3

@@ -56,6 +56,9 @@ cython_debug/
 *.log
 logs/
 
+
+usecases/pest-detection/deployment
+
 # OS
 .DS_Store
 Thumbs.db

@@ -1,43 +1,34 @@
-from fastapi import FastAPI, UploadFile, File, HTTPException
-from fastapi.responses import JSONResponse
-import uvicorn
-import shutil
-import os
+import gradio as gr
 from model_inference import PestInference
-from config import Config
-from PIL import Image
-import io
 
-app = FastAPI()
+# Initialize once (model loads only once)
 pest_infer = PestInference()
 
-@app.post("/predict/")
-async def predict_image(file: UploadFile = File(...)):
-    """
-    Accepts an image file upload and returns the prediction.
-    """
-    try:
-        contents = await file.read()
-        image = Image.open(io.BytesIO(contents)).convert("RGB")
-    except Exception as e:
-        raise HTTPException(status_code=400, detail=f"Invalid image file: {e}")
+def predict_image(image):
+    if image is None:
+        return "No image", {}
 
     try:
-        temp_dir = "temp_uploads"
-        os.makedirs(temp_dir, exist_ok=True)
-        temp_path = os.path.join(temp_dir, file.filename)
-        with open(temp_path, "wb") as buffer:
-            buffer.write(contents)
-        result = pest_infer.predict(temp_path)
+        result = pest_infer.predict(image)
+        # First output: Label wants {class_name: confidence} or just class_name
+        label_output = {result["predicted_class"]: result["confidence"]}
+        # Second output: full dict of class probabilities
+        json_output = result["classwise_probabilities"]
+        return label_output, json_output
     except Exception as e:
-        if os.path.exists(temp_path):
-            os.remove(temp_path)
-        raise HTTPException(status_code=500, detail=f"Inference failed: {e}")
+        return "Error", {"error": str(e)}
 
-    # Clean up temp file
-    if os.path.exists(temp_path):
-        os.remove(temp_path)
-    return JSONResponse(content=result)
+# Gradio Interface
+demo = gr.Interface(
+    fn=predict_image,
+    inputs=gr.Image(type="filepath", label="Upload Pest Image"),
+    outputs=[
+        gr.Label(num_top_classes=3, label="Prediction"),
+        gr.JSON(label="Classwise Probabilities")
+    ],
+    title="Pest Detection",
+    description="Upload a pest image and the model will classify it into the correct category."
+)
 
 if __name__ == "__main__":
-    uvicorn.run("app:app", host="0.0.0.0", port=8000, reload=True)
+    demo.launch()
