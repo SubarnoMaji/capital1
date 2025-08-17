@@ -17,7 +17,7 @@ class WeatherInput(BaseModel):
     model_config = ConfigDict(extra="allow")
 
 class WeatherAnalysisTool(BaseTool):
-    name: str = "weather_analysis"
+    name: str = "WeatherAnalysisTool"
     description: str = (
         "A specialized tool for analyzing weather data and providing insights for Indian locations using Open-Meteo API.\n"
         "Optimized for Indian cities and regions. Input should be a location (preferably Indian city) and optionally a date range and analysis type.\n"
@@ -359,13 +359,5 @@ if __name__ == "__main__":
     tool = WeatherAnalysisTool()
     print("Testing WeatherAnalysisTool with Mumbai, current weather:")
     result = tool._run(location="Mumbai")
-    print(result)
-    print("\nTesting WeatherAnalysisTool with Delhi, forecast:")
-    result = tool._run(location="Delhi", date_range = "2025-08-17:2025-08-18")
-    print(result)
-    print("\nTesting WeatherAnalysisTool with Bangalore, historical:")
-    result = tool._run(location="Bangalore", analysis_type="historical")
-    print(result)
-    print("\nTesting WeatherAnalysisTool with a query:")
-    result = tool._run(query="What is the weather in Chennai?")
+
     print(result)
