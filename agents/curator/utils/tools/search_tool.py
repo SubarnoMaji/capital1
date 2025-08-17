@@ -19,6 +19,9 @@ class WebSearchInput(BaseModel):
     k: int = Field(5, description="Number of search results to return (default: 5)")
 
 class WebSearchTool(BaseTool):
+    """
+    Search the web using Tavily by providing a query and number of search results.
+    """
     name: str = "WebSearchTool"
     description: str = (
         "Search the web using Tavily by providing a query and number of search results. "
@@ -26,12 +29,16 @@ class WebSearchTool(BaseTool):
     )
     args_schema: Type[WebSearchInput] = WebSearchInput
 
-    _client: TavilyClient = PrivateAttr(default=None)
+    # Pydantic v1 way — no default in PrivateAttr
+    _client: TavilyClient = PrivateAttr()
 
     def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
+        super().__init__(*args, **kwargs)  # This must come first
         api_key = getattr(config, "TAVILY_API_KEY", None)
-        self._client = TavilyClient(api_key)
+        if not api_key:
+            raise ValueError("TAVILY_API_KEY not found in config")
+        # Assign after super().__init__ so Pydantic doesn't block it
+        object.__setattr__(self, "_client", TavilyClient(api_key))
 
     def _run(self, **kwargs) -> str:
         try:
