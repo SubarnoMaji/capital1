@@ -464,15 +464,21 @@ class CuratorNode:
 
         # Execute the workflow
         try:
+            print(f"CuratorNode: Executing workflow with conversation_id: {conversation_id}")
+            print(f"CuratorNode: Inputs: {inputs}")
+            print(f"CuratorNode: Initial state keys: {list(initial_state.keys())}")
+            
             final_state = await self.workflow.ainvoke(initial_state)
             
+            print(f"CuratorNode: Final state keys: {list(final_state.keys()) if final_state else 'None'}")
+            
             # Extract the final response
-            result = final_state.get("response", {})
+            result = final_state.get("response", {}) if final_state else {}
             
             # Ensure we have the required fields
             if not result:
                 result = {
-                    "user_inputs": final_state.get("user_inputs", {}),
+                    "user_inputs": final_state.get("user_inputs", {}) if final_state else {},
                     "agent_message": "",
                     "CTAs": [],
                     "tasks": ""
@@ -483,6 +489,8 @@ class CuratorNode:
             
         except Exception as e:
             print(f"Error in workflow execution: {e}")
+            import traceback
+            print(f"Full traceback: {traceback.format_exc()}")
             # Return a fallback response
             return {
                 "user_inputs": inputs,

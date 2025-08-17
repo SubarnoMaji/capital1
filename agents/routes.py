@@ -43,7 +43,7 @@ def get_curator():
     Dependency to get the CuratorNode instance.
     """
     # Initialize the model
-    model = ChatOpenAI(model="gpt-4o", temperature=0.2)
+    model = ChatOpenAI(model="gpt-5-mini", temperature=0.3)
     
     # Define tools
     tools = [
