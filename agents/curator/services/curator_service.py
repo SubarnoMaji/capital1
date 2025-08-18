@@ -23,7 +23,8 @@ from utils.tools.search_tool import WebSearchTool
 from utils.tools.user_inputs import UserDataLoggerTool
 from utils.prompts import SYSTEM_PROMPT
 from utils.tools.message_logger import MessageHistoryLoggerTool
-# from utils.tools.pest_detection import PestDetectionTool
+from utils.tools.pest_detection import PestDetectionTool
+from utils.tools.policy_fetcher import PolicyFetcherTool
 from utils.tools.weather_tool import WeatherAnalysisTool
 from utils.tools.price_fetcher import PriceFetcherTool
 from utils.tools.retrieval_tool import RetrievalTool
@@ -39,6 +40,8 @@ class CuratorState(TypedDict):
     response: Optional[Dict[str, Any]]
     metadata: Dict[str, Any]  # Additional metadata like lat, long, place, etc.
     query: str  # Current user query passed explicitly
+    image_url: Optional[str]
+    policy_details: Optional[Dict[str, Any]]
 
 class CuratorNode:
     """
@@ -46,7 +49,7 @@ class CuratorNode:
     components using LangGraph for better state management and workflow control.
     """
     
-    def __init__(self, model, tools, system_prompt=SYSTEM_PROMPT):
+    def __init__(self, model, tools, system_prompt=SYSTEM_PROMPT, skip_routing=False):
         """
         Initialize the CuratorNode with models, tools, and system prompt.
         
@@ -54,10 +57,12 @@ class CuratorNode:
             model: Language model for generating summaries
             tools: List of tool objects available for use
             system_prompt: System prompt for the curator
+            skip_routing: If True, skips the routing stage and goes directly to response formatter
         """
         self.model = model
         self.tools = tools
         self.system_prompt = system_prompt
+        self.skip_routing = skip_routing
         
         # Initialize components
         self.query_router = QueryRouter(model, system_prompt)
@@ -75,13 +80,14 @@ class CuratorNode:
         Returns:
             Configured StateGraph for the curator workflow
         """
+        print("CuratorNode: Creating workflow...")
+        
         # Create the state graph
         workflow = StateGraph(CuratorState)
         
         # Add nodes
         workflow.add_node("query_router", self._query_router_node)
         workflow.add_node("task_manager", self._task_manager_node)
-        workflow.add_node("simple_tools_executor", self._simple_tools_executor_node)
         workflow.add_node("response_formatter", self._response_formatter_node)
         workflow.add_node("final_response", self._final_response_node)
         
@@ -89,15 +95,17 @@ class CuratorNode:
         workflow.set_entry_point("query_router")
         
         # Add conditional edges
-        workflow.add_conditional_edges(
-            "query_router",
-            self._should_execute_tasks,
-            {
-                "execute_tasks": "task_manager",
-                "execute_simple_tools": "simple_tools_executor",
-                "skip_tasks": "final_response"
-            }
-        )
+        if self.skip_routing:
+            workflow.add_edge("query_router", "response_formatter")
+        else:
+            workflow.add_conditional_edges(
+                "query_router",
+                self._should_execute_tasks,
+                {
+                    "execute_tasks": "task_manager",
+                    "skip_tasks": "final_response"
+                }
+            )
         
         workflow.add_conditional_edges(
             "task_manager",
@@ -109,9 +117,9 @@ class CuratorNode:
         )
         
         workflow.add_edge("response_formatter", "final_response")
-        workflow.add_edge("simple_tools_executor", "final_response")
         workflow.add_edge("final_response", END)
         
+        print("CuratorNode: Workflow created successfully")
         return workflow.compile()
     
     async def _query_router_node(self, state: CuratorState) -> CuratorState:
@@ -131,17 +139,44 @@ class CuratorNode:
         query = state.get("query") or self._extract_latest_query(state["messages"])
         
         # Create internal state for router
+        # Validate and ensure correct data types
+        image_url = state.get("image_url")
+        policy_details = state.get("policy_details")
+        
+        # Log the actual types for debugging
+        print(f"CuratorNode: Debug - image_url type: {type(image_url)}, value: {image_url}")
+        print(f"CuratorNode: Debug - policy_details type: {type(policy_details)}, value: {policy_details}")
+        
         internal_state = {
             "message_to_curator": {
                 "query": query,
-                "conversation_id": state["conversation_id"]
+                "conversation_id": state["conversation_id"],
+                "image_url": image_url,
+                "policy_details": policy_details
             },
             "message_history": state["messages"],
-            "user_inputs": state["user_inputs"]
+            "user_inputs": state["user_inputs"],
+            "image_url": image_url,
+            "policy_details": policy_details
         }
+
+        # Process with router - pass the skip_routing flag and determine usecase type
+        usecase_type = None
+        for tool in self.tools:
+            # Check for pest detection tool
+            if hasattr(tool, "name") and tool.name == "PestDetectionTool" and state.get("image_url"):
+                usecase_type = "pest"
+                break
+            # Check for policy fetcher tool
+            if hasattr(tool, "name") and tool.name == "PolicyFetcherTool" and state.get("policy_details"):
+                usecase_type = "policy"
+                break
         
-        # Process with router
-        updated_state = await self.query_router.process_state(internal_state)
+        updated_state = await self.query_router.process_state(
+            internal_state, 
+            skip=self.skip_routing, 
+            usecase_type=usecase_type
+        )
         
         # Update the LangGraph state
         state["messages"] = updated_state.get("message_history", state["messages"])
@@ -187,65 +222,6 @@ class CuratorNode:
             print(f"Warning: failed to store messages after task manager: {e}")
         
         print(f"CuratorNode: Task Manager Completed in {time.time() - start_time:.2f} seconds")
-        return state
-    
-    async def _simple_tools_executor_node(self, state: CuratorState) -> CuratorState:
-        """
-        Simple tools executor node that handles UserDataLoggerTool and similar simple tools.
-        When UserDataLoggerTool is called singularly, the query router already generated
-        the complete response, so we just execute the tool and return directly.
-        
-        Args:
-            state: Current state
-            
-        Returns:
-            Updated state with tool execution results
-        """
-        print("CuratorNode: Starting Simple Tools Executor")
-        start_time = time.time()
-        
-        last_ai_message = self._extract_last_ai_message(state["messages"])
-        
-        if last_ai_message:
-            try:
-                response_content = last_ai_message.content.replace('```json', '').replace('```', '').strip()
-                parsed_response = json.loads(response_content)
-                
-                # Extract the response fields that were already generated by query router
-                agent_message = parsed_response.get("agent_message", "")
-                ctas = parsed_response.get("CTAs", [])
-                tasks = parsed_response.get("tasks", "")
-                
-                # Execute UserDataLoggerTool if present
-                tool_calls = parsed_response.get("tool_calls", [])
-                for tool_call in tool_calls:
-                    if tool_call.get("name") == "UserDataLoggerTool":
-                        try:
-                            args = tool_call.get("args", {})
-                            await UserDataLoggerTool()._arun(**args)
-                            print("UserDataLoggerTool executed successfully")
-                        except Exception as e:
-                            print(f"Error executing UserDataLoggerTool: {e}")
-                
-                # Set the response directly (no need for response formatter)
-                state["response"] = {
-                    "user_inputs": state.get("user_inputs", {}),
-                    "agent_message": agent_message,
-                    "CTAs": ctas,
-                    "tasks": tasks
-                }
-                
-            except (json.JSONDecodeError, AttributeError) as e:
-                print(f"Error parsing response in simple tools executor: {e}")
-                # Set a fallback response
-                state["response"] = {
-                    "user_inputs": state.get("user_inputs", {}),
-                    "agent_message": "Sorry, I encountered an error processing your request.",
-                    "CTAs": [],
-                    "tasks": ""
-                }
-        
-        print(f"CuratorNode: Simple Tools Executor Completed in {time.time() - start_time:.2f} seconds")
         return state
     
     async def _response_formatter_node(self, state: CuratorState) -> CuratorState:
@@ -330,6 +306,18 @@ class CuratorNode:
                     "CTAs": parsed_response.get("CTAs", []),
                     "tasks": parsed_response.get("tasks", "")
                 }
+                
+                # Execute UserDataLoggerTool if present (for cases where we skip tasks)
+                tool_calls = parsed_response.get("tool_calls", [])
+                for tool_call in tool_calls:
+                    if tool_call.get("name") == "UserDataLoggerTool":
+                        try:
+                            args = tool_call.get("args", {})
+                            await UserDataLoggerTool()._arun(**args)
+                            print("UserDataLoggerTool executed successfully in final response")
+                        except Exception as e:
+                            print(f"Error executing UserDataLoggerTool: {e}")
+                
             except (json.JSONDecodeError, AttributeError):
                 # Fallback if parsing fails
                 state["response"] = {
@@ -351,6 +339,10 @@ class CuratorNode:
         Returns:
             Decision string for conditional edge
         """
+        # If routing was skipped, go directly to response formatter
+        if self.skip_routing:
+            return "skip_tasks"
+        
         last_ai_message = self._extract_last_ai_message(state["messages"])
         
         if not last_ai_message:
@@ -366,12 +358,15 @@ class CuratorNode:
             if not tool_calls:
                 return "skip_tasks"
             
-            # Check if it's only UserDataLoggerTool (singular case)
-            if len(tool_calls) == 1 and tool_calls[0].get("name") == "UserDataLoggerTool":
-                return "execute_simple_tools"
+            # Filter out simple tools that don't need task manager
+            simple_tools = {"UserDataLoggerTool", "MessageHistoryLoggerTool"}
             
-            # For other tool calls, use the task manager
-            return "execute_tasks"
+            needs_task_manager = any(
+                tool_call.get("name") not in simple_tools 
+                for tool_call in tool_calls
+            )
+            
+            return "execute_tasks" if needs_task_manager else "skip_tasks"
             
         except (json.JSONDecodeError, AttributeError):
             return "skip_tasks"
@@ -386,17 +381,15 @@ class CuratorNode:
         Returns:
             Decision string for conditional edge
         """
-        # If we already have a response from simple tools executor, skip formatting
-        if state.get("response"):
-            return "skip_format"
-        
         # Check if we have task results that need formatting
         task_results = state.get("task_results", {})
         
         # If we have search results or other complex results, format them
         if task_results and any(key != "errors" for key in task_results.keys()):
+            print("CuratorNode: Task results found, proceeding to formatting")
             return "format_response"
         
+        print("CuratorNode: No task results, skipping formatting")
         return "skip_format"
     
     def _extract_latest_query(self, messages: List[BaseMessage]) -> str:
@@ -429,7 +422,7 @@ class CuratorNode:
                 return message
         return None
     
-    async def __call__(self, query: str, conversation_id: str, inputs: Dict[str, Any]) -> Dict:
+    async def __call__(self, query: str, conversation_id: str, inputs: Dict[str, Any], image_url: Optional[str] = None, policy_details: Optional[Dict[str, Any]] = None) -> Dict:
         """
         Main execution flow for the CuratorNode using LangGraph.
 
@@ -460,6 +453,8 @@ class CuratorNode:
                 "place": inputs.get("place")
             },
             query=query,
+            image_url=image_url,
+            policy_details=policy_details
         )
 
         # Execute the workflow

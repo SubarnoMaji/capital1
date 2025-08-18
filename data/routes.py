@@ -306,7 +306,55 @@ async def put_data(
     except Exception as e:
         logger.error(f"Error updating data for _id={_id}: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Database error: {str(e)}")
-    
+
+@app.delete("/api/data")
+async def delete_data(collection_name: str, _id: str):
+    logger = get_logger(_id)
+    logger.info(
+        f"DELETE /api/data called with collection_name={collection_name} and _id={_id}"
+    )
+
+    # Validate collection name
+    valid_collections = [messages, user_inputs, tasks]
+    if collection_name not in valid_collections:
+        logger.error(f"Invalid collection_name={collection_name} for _id={_id}")
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid collection_name. Must be one of {valid_collections}",
+        )
+
+    try:
+        # Convert _id to ObjectId
+        obj_id = ObjectId(_id)
+        collection = db[collection_name]
+
+        # Check if the document with the given _id exists
+        existing_doc = collection.find_one({"_id": obj_id})
+
+        if not existing_doc:
+            logger.error(f"Document with _id={_id} not found in {collection_name}")
+            raise HTTPException(
+                status_code=404, detail=f"Document with _id {_id} not found"
+            )
+
+        # Delete the document
+        result = collection.delete_one({"_id": obj_id})
+
+        if result.deleted_count == 0:
+            logger.error(
+                f"Failed to delete document in {collection_name} for _id={_id}"
+            )
+            raise HTTPException(status_code=500, detail="Failed to delete document")
+
+        logger.info(f"Successfully deleted document from {collection_name} for _id={_id}")
+        return {"status": "success", "timestamp": datetime.now().isoformat()}
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error deleting data for _id={_id}: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Database error: {str(e)}")
+
 @app.get("/health")
 async def health_check():
     """

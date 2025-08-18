@@ -5,7 +5,10 @@ from datetime import datetime
 import sys
 import os
 from typing import Dict, List, Any
-sys.path.append(os.path.dirname(os.path.abspath(__file__)))
+# Add the project root to Python path
+sys.path.append(
+    os.path.abspath(os.path.join(os.path.dirname(__file__), "../../../.."))
+)
 
 from farmer_details import FarmerDetails
 
@@ -383,7 +386,8 @@ class PolicyAnalyzer:
 # Test function
 def test_policy_analyzer():
     """Test the policy analyzer"""
-    from main import FarmerDetails
+    # Import here to avoid circular imports
+    from usecases.policy_fetcher.farmer_details import FarmerDetails
     
     analyzer = PolicyAnalyzer()
     

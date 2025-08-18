@@ -13,16 +13,18 @@ from langchain_core.messages import SystemMessage, HumanMessage, AIMessage, Base
 from langchain_openai import ChatOpenAI
 from utils.tools.message_logger import MessageHistoryLoggerTool
 from agents.curator.utils.tools.user_inputs import UserDataLoggerTool
+from utils.tools.pest_detection import PestDetectionTool
+from utils.tools.policy_fetcher import PolicyFetcherTool
 
 sys.path.append(
     os.path.abspath(os.path.join(os.path.dirname(__file__), "../../.."))
 )
 
 from agents.config import Config as config
-from utils.prompts import SYSTEM_PROMPT
+from utils.prompts import SYSTEM_PROMPT, QUERY_ROUTER_PROMPT
 
 class QueryRouter:
-    def __init__(self, model, system_prompt: str):
+    def __init__(self, model, system_prompt: str, ):
         """
         Initialize the QueryRouter.
 
@@ -34,15 +36,17 @@ class QueryRouter:
         self.system_prompt = system_prompt
         self.message_logger = MessageHistoryLoggerTool()
 
-    async def process_state(self, state: Dict[str, Any]) -> Dict[str, Any]:
+    async def process_state(self, state: Dict[str, Any], skip: bool = False, usecase_type: str = None) -> Dict[str, Any]:
         """
         Routes the user query to appropriate actions or responses 
 
         Args:
             state: Current state of the agent 
+            skip: If True, skips normal routing and goes straight to response formatting
+            usecase_type: Type of usecase (pest, policy, etc.) for tool execution
 
         Returns:
-            Updated agent state with router response
+            Updated agent state with router analysis
         """
         print("QueryRouter: Starting Query Router")
         start_time = time.time()
@@ -51,6 +55,8 @@ class QueryRouter:
         # Extract relevant information from state
         query = state['message_to_curator']['query']
         user_inputs = state.get('user_inputs', {})
+        image_url = state.get('image_url')
+        policy_details = state.get('policy_details')
 
         # Retrieve existing message history for this conversation_id
         message_history: List[BaseMessage] = await self.message_logger._arun(
@@ -81,110 +87,155 @@ class QueryRouter:
         # Merge user inputs
         merged_user_inputs = {**existing_user_inputs, **user_inputs}
         
-        # Ask router to generate the final response
-        message_history.append(
-            HumanMessage(
-                content=f"""
-                You're a friendly farming buddy who happens to know a ton about agriculture! Think of yourself as that knowledgeable neighbor who's always ready to help, not some formal agricultural textbook.
+        if skip:
+            # If skipping, create a simple message flow for response formatting
+            print("QueryRouter: Skipping normal routing, creating simple message flow")
 
-                Latest User Query: {query}
-                Conversation ID: {conversation_id}
-                User Persona: {json.dumps(merged_user_inputs, indent=2)}
-
-                Language should always be ENGLISH
-
-                THINKING PROCESS:
-                1. First, assess if the query requires external data (weather, prices, web search) or can be answered from your knowledge
-                2. Determine if user data needs to be logged/updated
-                3. Choose between: direct response OR tool usage OR both
-                4. Check whether there has been any change in the user inputs, and act accordingly
-
-                RESPONSE STRATEGY:
-                - If the query can be answered directly with your knowledge: Provide a complete response with agent_message, CTAs, and tasks
-                - If external data is needed: Use appropriate tools and leave agent_message/CTAs/tasks empty (they'll be generated later)
-                - If user data needs logging: Use UserDataLoggerTool AND provide a brief response
-
-                RESPONSE FORMAT:
-                {{
-                    "agent_message": "Your response here (leave empty if using tools that will generate response later)",
-                    "CTAs": ["The next message the user is likely to send, not a question from you. If you are pushing out a task, DO NOT generate CTAs at all."],
-                    "tool_calls": [
-                        {{
-                            "name": "tool_name",
-                            "args": {{
-                                "param1": "value1",
-                                "param2": "value2"
-                            }}
-                        }}
-                    ],
-                    "tasks": "Specific actionable tasks or empty string if none"
-                }}
-
-                Guidelines regarding Agent Message:
-                - Should be short, concise, and occasionally witty, and personalized to the farmer (e.g., if the farmer is from West Bengal, include a Bengali phrase or local touch)
-                - Should avoid technical jargon and should summarize tool call results properly
-                - Always maintain a warm, friendly, and encouraging tone to build trust with the farmer
-                - Use simple language that is easy to understand, considering varying literacy levels. Use uppercase and lowercase properly, it should be semi-formal!
-                - Talk like you're chatting with a friend over tea, not giving a lecture
-                - Be encouraging and supportive, especially when farmers face challenges
-                - Should always be a properly formatted markdown, with boldened text for important items, headings whenever required
-
-                Guidelines regarding Tasks:
-                - Do not always prompt the user with tasks, provide simple tasks only if the context of the conversation requires so
-                - Do not mixup between agent message and tasks, both are completely different, and mixup will lead to a very poor user experience
-                - Only when there's a clear, immediate action needed
-                - Keep them simple and doable, don't create busywork - if nothing urgent, leave it empty
-                - Never keep it more than 5-10 words! Short and simple it should be
-                - When the user asks explicitly to add a reminder/event DO NOT use UserDataLoggerTool, throw out a task instead [IMPORTANT] 
-                - **IMPORTANT:** If you are pushing out a task (i.e., the "tasks" field is not empty), you must NOT generate any CTAs. Leave the "CTAs" field as an empty list. This is critical.
-
-                Guidelines regarding CTAs:
-                - CTAs should always be the next message the user is likely to send, not a question from you (the agent).
-                - Never generate CTAs if you are pushing out a task (i.e., if the "tasks" field is not empty, "CTAs" must be an empty list).
-                - CTAs should not be questions from the agent, but logical next user utterances.
-                - So basically it is a next word prediction task, but you are predicting the user's response to your answer
-
-                AVAILABLE TOOLS:
-                - UserDataLoggerTool: Store/update user agricultural data (crops, farmland, preferences), NOT reminders, events
-                  Example: {{"name": "UserDataLoggerTool", "args": {{"action": "store", "data": {{"location": "Punjab", "crop": "wheat"}}, "key": "conversation_id"}}}}
-                
-                - WebSearchTool: Search for location-specific agricultural info, new techniques, or current resources
-                  Example: {{"name": "WebSearchTool", "args": {{"query": "organic farming techniques", "k": 5}}}}
-                
-                - WeatherAnalysisTool: Get weather data for agricultural planning
-                  Example: {{"name": "WeatherAnalysisTool", "args": {{"location": "Mumbai", "analysis": "current"}}}}
-                
-                - PriceFetcherTool: Get live mandi prices for commodities across India
-                  Example: {{"name": "PriceFetcherTool", "args": {{"commodity": "Rice", "state": "West Bengal", "start_date": "01-Aug-2025", "end_date": "07-Aug-2025", "analysis": "summary"}}}}
-                
-                - RetrievalTool: Access stored agricultural information and history
-                  Example: {{"name": "RetrievalTool", "args": {{"query": "government farming schemes", "limit": 5, "use_metadata_filter": true}}}}
-
-                GUIDELINES:
-                - Keep responses concise and actionable (under 50 words for agent_message)
-                - Only use tools when necessary for accurate, up-to-date information
-                - Always log user-provided agricultural data using UserDataLoggerTool
-                - Provide complete responses when possible to reduce latency
-                - Do not immediately bombard the user with questions, slowly slowly ease in!
-                - Start casual and ease into farming talk naturally
-                - Don't overwhelm with questions - let the conversation flow
-                - Match the user's energy - if they're relaxed, be relaxed; if they're urgent, be helpful but calm
-
-                KEY PRINCIPLE: Respond like a knowledgeable friend who happens to know a lot about farming, not like an agricultural encyclopedia. 
-                Match the user's energy and intent - if they're just saying hello, have a normal human conversation!
-
-                CRITICAL: When using tools, the "args" field MUST be a proper JSON object/dictionary, NOT a string. 
-                This ensures tools work correctly and prevents errors.
-                """,
-                name="user"
+            print(f"QueryRouter: usecase_type: {usecase_type}, image_url: {image_url}, policy_details: {policy_details}")
+            print(f"QueryRouter: Debug - image_url type: {type(image_url)}, policy_details type: {type(policy_details)}")
+            
+            # Format the query router prompt with the actual values (same as normal flow)
+            formatted_prompt = QUERY_ROUTER_PROMPT.format(
+                query=query,
+                conversation_id=conversation_id,
+                user_persona=json.dumps(merged_user_inputs, indent=2)
             )
-        )
+            
+            # Add formatted query router prompt if not already present
+            if not any(isinstance(msg, HumanMessage) and msg.content == formatted_prompt for msg in message_history):
+                message_history.append(HumanMessage(content=formatted_prompt, name="user"))
+            
+            # Execute tools based on usecase type and add results to message history
+            if usecase_type == "pest" and image_url and isinstance(image_url, str):
+                print("QueryRouter: Executing pest detection tool")
+                print("=== PEST DETECTION TOOL INPUTS ===")
+                print(f"image: {image_url} (type: {type(image_url)})")
+                print("==================================")
+                try:
+                    pest_tool = PestDetectionTool()
+                    tool_result = pest_tool._run(
+                        image=image_url,
+                    )
 
-        # Get router response
-        final_router_response = await self.model.ainvoke(message_history)
+                    router_message = {
+                        "agent_message": "",
+                        "CTAs": [],
+                        "tool_calls": [
+                            {
+                                "tool_name": "PestDetectionTool",
+                                "args": {
+                                    "image": image_url
+                                }
+                            }
+                        ],
+                        "tasks": "",
+                        "routing_skipped": True,
+                        "note": "Routing stage was skipped for this specialized endpoint. Proceeding directly to response formatting."
+                    }
 
-        # Add router response to message history
-        message_history.append(final_router_response)
+                    message_history.append(AIMessage(content=json.dumps(router_message, indent=2)))
+                    
+                    # Add tool result as an AI message
+                    tool_message = {
+                        "tool_name": "PestDetectionTool",
+                        "result": tool_result,
+                        "note": "Pest detection tool executed successfully"
+                    }
+                    message_history.append(AIMessage(content=json.dumps(tool_message, indent=2)))
+                    
+                except Exception as e:
+                    print(f"Error executing pest detection tool: {e}")
+                    error_message = {
+                        "tool_name": "PestDetectionTool",
+                        "error": str(e),
+                        "note": "Pest detection tool failed to execute"
+                    }
+                    message_history.append(AIMessage(content=json.dumps(error_message, indent=2)))
+            
+            elif usecase_type == "policy" and policy_details and isinstance(policy_details, dict):
+                print("QueryRouter: Executing policy fetcher tool")
+                print("=== POLICY FETCHER TOOL INPUTS ===")
+                print(f"policy_details: {policy_details} (type: {type(policy_details)})")
+                if isinstance(policy_details, dict):
+                    for key, value in policy_details.items():
+                        print(f"  {key}: {value} (type: {type(value)})")
+                print("==================================")
+                try:
+                    policy_tool = PolicyFetcherTool()
+                    tool_result = policy_tool._run(
+                        **policy_details
+                    )
+
+                    router_message = {
+                        "agent_message": "",
+                        "CTAs": [],
+                        "tool_calls": [
+                            {
+                                "tool_name": "PolicyFetcherTool",
+                                "args": policy_details
+                            }
+                        ],
+                        "tasks": "",
+                        "routing_skipped": True,
+                        "note": "Routing stage was skipped for this specialized endpoint. Proceeding directly to response formatting."
+                    }
+
+                    message_history.append(AIMessage(content=json.dumps(router_message, indent=2)))
+
+                    # Add tool result as an AI message
+                    tool_message = {
+                        "tool_name": "PolicyFetcherTool",
+                        "result": tool_result,
+                        "note": "Policy fetcher tool executed successfully"
+                    }
+                    message_history.append(AIMessage(content=json.dumps(tool_message, indent=2)))
+                    
+                except Exception as e:
+                    print(f"Error executing policy fetcher tool: {e}")
+                    error_message = {
+                        "tool_name": "PolicyFetcherTool",
+                        "error": str(e),
+                        "note": "Policy fetcher tool failed to execute"
+                    }
+                    message_history.append(AIMessage(content=json.dumps(error_message, indent=2)))
+            
+            # # Create a simple AI response indicating routing was skipped
+            # skip_response = {
+            #     "agent_message": "",
+            #     "CTAs": [],
+            #     "tool_calls": [],
+            #     "tasks": "",
+            #     "routing_skipped": True,
+            #     "note": "Routing stage was skipped for this specialized endpoint. Proceeding directly to response formatting."
+            # }
+            
+            # # Add the skip response as an AI message
+            # message_history.append(AIMessage(content=json.dumps(skip_response, indent=2)))
+            
+        else:
+            # Normal routing flow
+            print("QueryRouter: Processing normal routing flow")
+            
+            # Format the query router prompt with the actual values
+            formatted_prompt = QUERY_ROUTER_PROMPT.format(
+                query=query,
+                conversation_id=conversation_id,
+                user_persona=json.dumps(merged_user_inputs, indent=2)
+            )
+            
+            # Ask router to generate the final response
+            message_history.append(
+                HumanMessage(
+                    content=formatted_prompt,
+                    name="user"
+                )
+            )
+
+            # Get router response
+            final_router_response = await self.model.ainvoke(message_history)
+
+            # Add router response to message history
+            message_history.append(final_router_response)
 
         # Persist updated message history back to DB
         await self.message_logger._arun(
@@ -194,7 +245,7 @@ class QueryRouter:
             messages=message_history
         )
 
-        # Update state with new message history (optional)
+        # Update state with new message history
         state["message_history"] = message_history
         
         print(f"QueryRouter: Query Router Completed in {time.time() - start_time:.2f} seconds")

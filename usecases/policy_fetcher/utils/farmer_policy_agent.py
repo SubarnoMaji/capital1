@@ -1,5 +1,5 @@
 from typing import Dict, List
-from .web_search_tool import WebSearchTool
+from .search_tool import WebSearchTool
 from .openai_client import OpenAIClient
 
 class FarmerPolicyAgent:

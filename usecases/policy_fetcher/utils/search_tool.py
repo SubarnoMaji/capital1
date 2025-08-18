@@ -8,10 +8,10 @@ import sys
 
 # Add the parent directory (project root) to the Python path
 sys.path.append(
-    os.path.abspath(os.path.join(os.path.dirname(__file__), "../../../.."))
+    os.path.abspath(os.path.join(os.path.dirname(__file__), "../../"))
 )
 
-from agents.config import Config as config
+from config import Config as config
 from pydantic import PrivateAttr
 
 class WebSearchInput(BaseModel):
@@ -99,11 +99,10 @@ class WebSearchTool(BaseTool):
             results.append({
                 "Title": item.get("title", ""),
                 "Link": item.get("url", ""),
-                "Snippet": item.get("content", ""),
+                "Snippet": item.get("content", "")[:200] + "..." if len(item.get("content", "")) > 200 else item.get("content", ""),
                 "Favicon": item.get("favicon", ""),
-                "Success": True,
-                "Error": "",
-                "Content": item.get("raw_content", "") or item.get("content", "")
+                "Content": item.get("raw_content", ""),
+                "Success": True
             })
         return results
 

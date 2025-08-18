@@ -6,7 +6,7 @@ from pydantic import BaseModel, Field
 from typing import List, Optional, Dict, Any
 import asyncio
 import uvicorn
-from .main import FarmerPolicyAgent, FarmerDetails
+from main import FarmerPolicyAgent, FarmerDetails
 
 app = FastAPI(
     title="Farmer Policy Agent API",

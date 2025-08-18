@@ -6,18 +6,19 @@ import json
 import os
 import sys
 
-from typing import Dict, List, Any
-from dataclasses import dataclass
-from utils.openai_client import OpenAIClient
-from utils.data_processor import DataProcessor
-from utils.policy_analyser import PolicyAnalyzer
-from farmer_details import FarmerDetails
-
+# Add the project root to Python path
 sys.path.append(
-    os.path.abspath(os.path.join(os.path.dirname(__file__), "../.."))
+    os.path.abspath(os.path.join(os.path.dirname(__file__), "../../.."))
 )
 
-from agents.curator.utils.tools.search_tool import WebSearchTool
+from typing import Dict, List, Any
+from dataclasses import dataclass
+from .utils.openai_client import OpenAIClient
+from .utils.data_processor import DataProcessor
+from .utils.policy_analyser import PolicyAnalyzer
+from .farmer_details import FarmerDetails
+
+from .utils.search_tool import WebSearchTool
 
 class FarmerPolicyAgent:
     def __init__(self):
@@ -81,21 +82,31 @@ class FarmerPolicyAgent:
         return base_queries[:6]  # Limit to 6 queries to avoid overwhelming
     
     async def _search_policies(self, queries: List[str]) -> List[Dict]:
-        """Search for policies using multiple queries"""
-        all_results = []
-        
-        for query in queries:
+        """Search for policies using multiple queries in parallel and show which search result has completed"""
+        import asyncio
+
+        async def search_single_query(query, idx):
             try:
-                print(f"Searching: {query}")
-                results = await self.search_tool._arun(query=query, k=3)
+                print(f"Searching ({idx+1}/{len(queries)}): {query}")
+                results = await self.search_tool._arun(query=query, k=1)
                 if isinstance(results, str):
                     results = eval(results)  # Convert string to list if needed
-                all_results.extend(results)
-                await asyncio.sleep(1)  # Rate limiting
+                await asyncio.sleep(1)  # Rate limiting per query
+                print(f"Completed search ({idx+1}/{len(queries)}): {query}")
+                return results
             except Exception as e:
                 print(f"Error searching for query '{query}': {str(e)}")
-                continue
-        
+                return []
+
+        # Launch all searches in parallel, tracking which query is which
+        tasks = [search_single_query(query, idx) for idx, query in enumerate(queries)]
+        all_results_nested = await asyncio.gather(*tasks)
+        all_results = []
+        for results in all_results_nested:
+            if isinstance(results, list):
+                all_results.extend(results)
+            elif results:  # In case a single dict is returned
+                all_results.append(results)
         return all_results
     
     async def _analyze_policies(self, policies: List[Dict], farmer_details: FarmerDetails) -> Dict:

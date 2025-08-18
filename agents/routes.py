@@ -21,7 +21,8 @@ from agents.curator.utils.tools.user_inputs import UserDataLoggerTool
 from agents.curator.utils.tools.retrieval_tool import RetrievalTool
 from agents.curator.utils.tools.price_fetcher import PriceFetcherTool
 from agents.curator.utils.tools.weather_tool import WeatherAnalysisTool
-# from agents.curator.utils.tools.pest_detection import PestDetectionTool
+from agents.curator.utils.tools.pest_detection import PestDetectionTool
+from agents.curator.utils.tools.policy_fetcher import PolicyFetcherTool
 
 router = APIRouter(prefix="/api/agent")
 
@@ -30,6 +31,8 @@ class CuratorRequest(BaseModel):
     query: str = Field(..., description="User query for agricultural advice")
     conversation_id: str = Field(..., description="Unique identifier for the conversation")
     inputs: Optional[Dict] = Field(None, description="User inputs for the query")
+    image_url: Optional[str] = Field(None, description="Image URL for pest detection")
+    policy_details: Optional[Dict] = Field(None, description="Policy details for policy detection")
 
 class CuratorResponse(BaseModel):
     user_inputs: Dict[str, Any] = Field(..., description="User inputs extracted from the query")
@@ -58,6 +61,46 @@ def get_curator():
     
     # Initialize the CuratorNode
     curator = CuratorNode(model, tools)
+    
+    return curator
+
+def get_pest_detection_curator():
+    """
+    Dependency to get the CuratorNode instance for pest detection.
+    This curator skips routing and only uses response formatter.
+    """
+    # Initialize the model
+    model = ChatOpenAI(model="gpt-5-mini", temperature=0.3)
+    
+    # Define tools - only essential ones for pest detection
+    tools = [
+        PestDetectionTool(),
+        UserDataLoggerTool(),
+        MessageHistoryLoggerTool()
+    ]
+    
+    # Initialize the CuratorNode with skip_routing=True
+    curator = CuratorNode(model, tools, skip_routing=True)
+    
+    return curator
+
+def get_policy_detection_curator():
+    """
+    Dependency to get the CuratorNode instance for policy detection.
+    This curator skips routing and only uses response formatter.
+    """
+    # Initialize the model
+    model = ChatOpenAI(model="gpt-5-mini", temperature=0.3)
+    
+    # Define tools - only essential ones for policy detection
+    tools = [
+        PolicyFetcherTool(),
+        UserDataLoggerTool(),
+        MessageHistoryLoggerTool()
+    ]
+    
+    # Initialize the CuratorNode with skip_routing=True
+    curator = CuratorNode(model, tools, skip_routing=True)
     
     return curator
     
@@ -91,6 +134,77 @@ async def curate(
         # Log the error and return a 500 error
         print(f"Error in curator service: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Error in curator service: {str(e)}")
+
+@router.post("/pest-detection", response_model=CuratorResponse)
+async def pest_detection(
+    request: CuratorRequest,
+    curator: CuratorNode = Depends(get_pest_detection_curator)
+):
+    """
+    Endpoint for pest detection inference using curator but skipping routing.
+    Only uses response formatter for summarization.
+    
+    Args:
+        request: CuratorRequest containing the user query and conversation ID
+        curator: CuratorNode instance specialized for pest detection (injected by FastAPI)
+        
+    Returns:
+        CuratorResponse containing pest detection results and agent message
+    """
+    try:
+        # Create a custom query for pest detection
+        custom_query = f"Pest Detection Request: {request.query}. Please analyze this pest detection query and provide comprehensive advice."
+        
+        # Call the curator service with custom query
+        result = await curator(custom_query, request.conversation_id, request.inputs, request.image_url, None)
+        
+        # Return the result
+        return CuratorResponse(
+            user_inputs=result.get("user_inputs", {}),
+            agent_message=result.get("agent_message", ""),
+            CTAs=result.get("CTAs", []),
+            tasks=result.get("tasks", "")
+        )
+    except Exception as e:
+        # Log the error and return a 500 error
+        print(f"Error in pest detection service: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error in pest detection service: {str(e)}")
+
+@router.post("/policy-detection", response_model=CuratorResponse)
+async def policy_detection(
+    request: CuratorRequest,
+    curator: CuratorNode = Depends(get_policy_detection_curator)
+):
+    """
+    Endpoint for policy detection inference using curator but skipping routing.
+    Only uses response formatter for summarization.
+    
+    Args:
+        request: CuratorRequest containing the user query and conversation ID
+        curator: CuratorNode instance specialized for policy detection (injected by FastAPI)
+        
+    Returns:
+        CuratorResponse containing policy detection results and agent message
+    """
+    try:
+        # Create a custom query for policy detection
+        custom_query = f"Policy Detection Request: {request.query}. Please analyze this policy query and provide comprehensive recommendations."
+        
+        # Call the curator service with custom query
+        result = await curator(custom_query, request.conversation_id, request.inputs, None, request.policy_details)
+        
+        # Return the result
+        return CuratorResponse(
+            user_inputs=result.get("user_inputs", {}),
+            agent_message=result.get("agent_message", ""),
+            CTAs=result.get("CTAs", []),
+            tasks=result.get("tasks", "")
+        )
+        
+    except Exception as e:
+        # Log the error and return a 500 error
+        print(f"Error in policy detection service: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error in policy detection service: {str(e)}")
     
 @router.get("/health")
 async def health_check():
