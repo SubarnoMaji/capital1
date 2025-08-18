@@ -189,6 +189,8 @@ async def put_data(
             # Define valid keys for user_inputs
             valid_user_input_keys = [
                 "user_inputs",  # For updating the whole object
+                "name",
+                "language",
                 "location",
                 "land_size", 
                 "soil_type",
