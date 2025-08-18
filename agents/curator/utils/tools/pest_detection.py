@@ -1,11 +1,14 @@
 import os
 import sys
 import base64
+import requests
+import tempfile
 from typing import Dict, Any, Optional, Tuple, Type
 from langchain.tools import BaseTool
 from langchain_openai import ChatOpenAI
 from langchain.schema import HumanMessage
 from pydantic import BaseModel, Field
+from urllib.parse import urlparse
 
 # Add the parent directory (project root) to the Python path
 sys.path.append(
@@ -16,7 +19,7 @@ from agents.config import Config as config
 
 class PestDetectionInput(BaseModel):
     """Input schema for the pest detection tool."""
-    image: str = Field(description="Path to the image file for pest detection")
+    image: str = Field(description="Public URL of the image for pest detection")
 
 class PestDetectionTool(BaseTool):
     """
@@ -27,7 +30,7 @@ class PestDetectionTool(BaseTool):
     name: str = "PestDetectionTool"
     description: str = """
     Detects pests in images using a machine learning model and provides remedies.
-    Takes an image as input.
+    Takes a public image URL as input.
     """
     args_schema: Type[BaseModel] = PestDetectionInput
     
@@ -150,6 +153,63 @@ class PestDetectionTool(BaseTool):
             102: "Cicadellidae"
         }
     
+    def is_valid_url(self, url: str) -> bool:
+        """Validate if the provided string is a valid URL."""
+        try:
+            result = urlparse(url)
+            return all([result.scheme, result.netloc])
+        except Exception:
+            return False
+    
+    def download_image_from_url(self, url: str) -> Optional[str]:
+        """
+        Download image from URL and save to temporary file.
+        Returns:
+            str: Path to the downloaded temporary file, or None if failed
+        """
+        try:
+            if not self.is_valid_url(url):
+                raise ValueError("Invalid URL provided")
+            
+            # Set headers to mimic a browser request
+            headers = {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+            }
+            
+            response = requests.get(url, headers=headers, timeout=30, stream=True)
+            response.raise_for_status()
+            
+            # Check if the content is an image
+            content_type = response.headers.get('content-type', '').lower()
+            if not content_type.startswith('image/'):
+                raise ValueError(f"URL does not point to an image. Content-Type: {content_type}")
+            
+            # Create temporary file with appropriate extension
+            file_extension = '.jpg'  # Default extension
+            if 'png' in content_type:
+                file_extension = '.png'
+            elif 'gif' in content_type:
+                file_extension = '.gif'
+            elif 'webp' in content_type:
+                file_extension = '.webp'
+            
+            temp_file = tempfile.NamedTemporaryFile(delete=False, suffix=file_extension)
+            
+            # Download and save the image
+            for chunk in response.iter_content(chunk_size=8192):
+                if chunk:
+                    temp_file.write(chunk)
+            
+            temp_file.close()
+            return temp_file.name
+            
+        except requests.exceptions.RequestException as e:
+            print(f"Error downloading image from URL: {e}")
+            return None
+        except Exception as e:
+            print(f"Error processing image URL: {e}")
+            return None
+    
     def encode_image_to_base64(self, image_path: str) -> str:
         """Encode image to base64 for API calls."""
         with open(image_path, "rb") as image_file:
@@ -158,6 +218,8 @@ class PestDetectionTool(BaseTool):
     def call_gradio_api(self, image_path: str) -> Tuple[Optional[int], Optional[float]]:
         """
         Call the Hugging Face Gradio API endpoint for pest classification.
+        Args:
+            image_path: Path to the downloaded image file
         Returns:
             Tuple[int, float]: (predicted_class, confidence_probability)
         """
@@ -253,33 +315,53 @@ class PestDetectionTool(BaseTool):
         """
         Main execution method for the tool.
         Args:
-            image: Path to the image file
+            image: Public URL of the image
         Returns:
             str: Complete analysis and remedy recommendation
         """
+        temp_image_path = None
         try:
-            predicted_class, confidence = self.call_gradio_api(image)
+            # Download image from URL
+            temp_image_path = self.download_image_from_url(image)
+            if temp_image_path is None:
+                return "Error: Failed to download image from the provided URL. Please ensure the URL is valid and points to an image."
+            
+            # Proceed with pest detection using the downloaded image
+            predicted_class, confidence = self.call_gradio_api(temp_image_path)
             output_lines = []
             output_lines.append(f"Predicted Class: {predicted_class}")
             if confidence is not None:
                 output_lines.append(f"Confidence: {confidence:.2%}")
             else:
                 output_lines.append("Confidence: N/A")
+            
             if confidence is not None and predicted_class is not None and confidence >= 0.75:
                 pest_name = self.pest_classes.get(predicted_class, f"Unknown pest (Class {predicted_class})")
-                openai_analysis = self.analyze_with_openai_vision(image, pest_name)
+                openai_analysis = self.analyze_with_openai_vision(temp_image_path, pest_name)
                 output_lines.append(openai_analysis)
             else:
-                openai_analysis = self.analyze_with_openai_vision(image)
+                openai_analysis = self.analyze_with_openai_vision(temp_image_path)
                 output_lines.append(openai_analysis)
+            
             return "\n".join(output_lines)
+            
         except Exception as e:
             return f"Error in pest detection: {str(e)}"
+        finally:
+            # Clean up temporary file
+            if temp_image_path and os.path.exists(temp_image_path):
+                try:
+                    os.unlink(temp_image_path)
+                except Exception:
+                    pass  # Ignore cleanup errors
     
     async def _arun(self, image: str) -> str:
         """
         Asynchronous version of the tool.
-        Runs the synchronous _run method in a thread executor.
+        Args:
+            image: Public URL of the image
+        Returns:
+            str: Complete analysis and remedy recommendation
         """
         import asyncio
         try:
@@ -294,13 +376,13 @@ class PestDetectionTool(BaseTool):
 if __name__ == "__main__":
     import asyncio
 
-    IMAGE = input("Enter image: ").strip()
-    if IMAGE:
+    IMAGE_URL = input("Enter image URL: ").strip()
+    if IMAGE_URL:
         pest_tool = PestDetectionTool()
         try:    
-            result = asyncio.run(pest_tool._arun(IMAGE))
+            result = asyncio.run(pest_tool._arun(IMAGE_URL))
             print(result)
         except Exception as e:
             print(f"❌ Error running pest detection: {e}")
     else:
-        print("❌ Missing image")
+        print("❌ Missing image URL")
