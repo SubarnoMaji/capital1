@@ -357,6 +357,209 @@ async def delete_data(collection_name: str, _id: str):
         logger.error(f"Error deleting data for _id={_id}: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Database error: {str(e)}")
 
+@app.post("/api/task")
+async def add_task(
+    _id: str,
+    task_data: dict = Body(...)
+):
+    """
+    Add a new task to the tasks array of a document.
+    Expected task_data format: {"task_id": "...", "content": "..."}
+    """
+    logger = get_logger(_id)
+    logger.info(f"POST /api/task called with _id={_id}")
+
+    try:
+        # Convert _id to ObjectId
+        obj_id = ObjectId(_id)
+        collection = db[tasks]
+
+        # Validate required fields in task_data
+        required_fields = ["task_id", "content"]
+        for field in required_fields:
+            if field not in task_data:
+                logger.error(f"Missing required field: {field}")
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Missing required field: {field}"
+                )
+
+        # Check if the document exists
+        existing_doc = collection.find_one({"_id": obj_id})
+
+        if existing_doc:
+            # Initialize tasks array if it doesn't exist
+            if "tasks" not in existing_doc:
+                existing_doc["tasks"] = []
+            
+            # Check if task_id already exists
+            for task in existing_doc["tasks"]:
+                if task.get("task_id") == task_data["task_id"]:
+                    logger.error(f"Task with task_id={task_data['task_id']} already exists")
+                    raise HTTPException(
+                        status_code=409,
+                        detail=f"Task with task_id={task_data['task_id']} already exists"
+                    )
+            
+            # Add the new task
+            existing_doc["tasks"].append(task_data)
+            
+            # Update the document
+            result = collection.replace_one({"_id": obj_id}, existing_doc)
+            
+            if result.matched_count == 0:
+                logger.error(f"Failed to update document for _id={_id}")
+                raise HTTPException(status_code=500, detail="Failed to update document")
+        else:
+            # Create new document with the task
+            new_doc = {
+                "_id": obj_id,
+                "tasks": [task_data]
+            }
+            result = collection.insert_one(new_doc)
+            
+            if not result.acknowledged:
+                logger.error(f"Failed to create document for _id={_id}")
+                raise HTTPException(status_code=500, detail="Failed to create document")
+
+        logger.info(f"Successfully added task with task_id={task_data['task_id']} for _id={_id}")
+        return {"status": "success", "timestamp": datetime.now().isoformat()}
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error adding task for _id={_id}: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Database error: {str(e)}")
+
+
+@app.delete("/api/task")
+async def delete_task(
+    _id: str,
+    task_id: str
+):
+    """
+    Delete a specific task from the tasks array of a document.
+    """
+    logger = get_logger(_id)
+    logger.info(f"DELETE /api/task called with _id={_id}, task_id={task_id}")
+
+    try:
+        # Convert _id to ObjectId
+        obj_id = ObjectId(_id)
+        collection = db[tasks]
+
+        # Check if the document exists
+        existing_doc = collection.find_one({"_id": obj_id})
+
+        if not existing_doc:
+            logger.error(f"Document with _id={_id} not found")
+            raise HTTPException(
+                status_code=404,
+                detail=f"Document with _id={_id} not found"
+            )
+
+        if "tasks" not in existing_doc or not isinstance(existing_doc["tasks"], list):
+            logger.error(f"No tasks array found in document with _id={_id}")
+            raise HTTPException(
+                status_code=404,
+                detail=f"No tasks array found in document with _id={_id}"
+            )
+
+        # Find and remove the task
+        original_length = len(existing_doc["tasks"])
+        existing_doc["tasks"] = [
+            task for task in existing_doc["tasks"] 
+            if task.get("task_id") != task_id
+        ]
+
+        if len(existing_doc["tasks"]) == original_length:
+            logger.error(f"Task with task_id={task_id} not found in document with _id={_id}")
+            raise HTTPException(
+                status_code=404,
+                detail=f"Task with task_id={task_id} not found"
+            )
+
+        # Update the document
+        result = collection.replace_one({"_id": obj_id}, existing_doc)
+
+        if result.matched_count == 0:
+            logger.error(f"Failed to update document for _id={_id}")
+            raise HTTPException(status_code=500, detail="Failed to update document")
+
+        logger.info(f"Successfully deleted task with task_id={task_id} for _id={_id}")
+        return {"status": "success", "timestamp": datetime.now().isoformat()}
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error deleting task for _id={_id}: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Database error: {str(e)}")
+
+
+@app.get("/api/task")
+async def get_tasks(
+    _id: str,
+    task_id: Optional[str] = None
+):
+    """
+    Get tasks for a document. If task_id is provided, return specific task.
+    Otherwise, return all tasks for the document.
+    """
+    logger = get_logger(_id)
+    logger.info(f"GET /api/task called with _id={_id}, task_id={task_id}")
+
+    try:
+        # Convert _id to ObjectId
+        obj_id = ObjectId(_id)
+        collection = db[tasks]
+
+        # Find the document
+        existing_doc = collection.find_one({"_id": obj_id})
+
+        if not existing_doc:
+            logger.error(f"Document with _id={_id} not found")
+            raise HTTPException(
+                status_code=404,
+                detail=f"Document with _id={_id} not found"
+            )
+
+        if "tasks" not in existing_doc:
+            existing_doc["tasks"] = []
+
+        tasks_data = existing_doc["tasks"]
+
+        if task_id:
+            # Return specific task
+            for task in tasks_data:
+                if task.get("task_id") == task_id:
+                    logger.info(f"Successfully retrieved task with task_id={task_id} for _id={_id}")
+                    return {
+                        "status": "success",
+                        "data": task,
+                        "timestamp": datetime.now().isoformat()
+                    }
+            
+            logger.error(f"Task with task_id={task_id} not found in document with _id={_id}")
+            raise HTTPException(
+                status_code=404,
+                detail=f"Task with task_id={task_id} not found"
+            )
+        else:
+            # Return all tasks
+            logger.info(f"Successfully retrieved all tasks for _id={_id}")
+            return {
+                "status": "success",
+                "data": tasks_data,
+                "timestamp": datetime.now().isoformat()
+            }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error retrieving tasks for _id={_id}: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Database error: {str(e)}")
+
+
 @app.get("/health")
 async def health_check():
     """
