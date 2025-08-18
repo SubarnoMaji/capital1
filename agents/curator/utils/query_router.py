@@ -86,6 +86,10 @@ class QueryRouter:
         
         # Merge user inputs
         merged_user_inputs = {**existing_user_inputs, **user_inputs}
+
+        language = merged_user_inputs.get("language", "English")
+
+        print(f"QueryRouter: language: {language}")
         
         if skip:
             # If skipping, create a simple message flow for response formatting
@@ -98,7 +102,8 @@ class QueryRouter:
             formatted_prompt = QUERY_ROUTER_PROMPT.format(
                 query=query,
                 conversation_id=conversation_id,
-                user_persona=json.dumps(merged_user_inputs, indent=2)
+                user_persona=json.dumps(merged_user_inputs, indent=2),
+                language=language
             )
             
             # Add formatted query router prompt if not already present
@@ -220,7 +225,8 @@ class QueryRouter:
             formatted_prompt = QUERY_ROUTER_PROMPT.format(
                 query=query,
                 conversation_id=conversation_id,
-                user_persona=json.dumps(merged_user_inputs, indent=2)
+                user_persona=json.dumps(merged_user_inputs, indent=2),
+                language=language
             )
             
             # Ask router to generate the final response

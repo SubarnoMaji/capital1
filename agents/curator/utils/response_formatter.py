@@ -164,6 +164,12 @@ class ResponseFormatter:
 
             User Context: {json.dumps(user_inputs, indent=2) if user_inputs else "No additional context available"}
 
+            Language: {user_inputs.get("language", "English")}
+
+            The agent message, CTAs and tasks should be in the language of the user, {user_inputs.get("language", "English")}, other than that, the internal workings of the agent should be in English.
+
+            The keys should be in English, but the content in the keys should be in the language of the user, {user_inputs.get("language", "English")}.
+
             Respond in this exact JSON format:
             {{
                 "agent_message": "Your comprehensive agricultural advice here (Markdown Response)",
