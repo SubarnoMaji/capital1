@@ -15,6 +15,7 @@ from utils.tools.message_logger import MessageHistoryLoggerTool
 from agents.curator.utils.tools.user_inputs import UserDataLoggerTool
 from utils.tools.pest_detection import PestDetectionTool
 from utils.tools.policy_fetcher import PolicyFetcherTool
+from utils.tools.news_tool import NewsFetcherTool
 
 sys.path.append(
     os.path.abspath(os.path.join(os.path.dirname(__file__), "../../.."))
@@ -57,6 +58,9 @@ class QueryRouter:
         user_inputs = state.get('user_inputs', {})
         image_url = state.get('image_url')
         policy_details = state.get('policy_details')
+        news_url = state.get('news_url', '')
+
+        print(f"QueryRouter: news_url: {news_url}")
 
         # Retrieve existing message history for this conversation_id
         message_history: List[BaseMessage] = await self.message_logger._arun(
@@ -204,18 +208,50 @@ class QueryRouter:
                     }
                     message_history.append(AIMessage(content=json.dumps(error_message, indent=2)))
             
-            # # Create a simple AI response indicating routing was skipped
-            # skip_response = {
-            #     "agent_message": "",
-            #     "CTAs": [],
-            #     "tool_calls": [],
-            #     "tasks": "",
-            #     "routing_skipped": True,
-            #     "note": "Routing stage was skipped for this specialized endpoint. Proceeding directly to response formatting."
-            # }
-            
-            # # Add the skip response as an AI message
-            # message_history.append(AIMessage(content=json.dumps(skip_response, indent=2)))
+            elif usecase_type == "news" and news_url and isinstance(news_url, str):
+                print("QueryRouter: Executing news fetcher tool")
+                print("=== NEWS FETCHER TOOL INPUTS ===")
+                print(f"news_url: {news_url} (type: {type(news_url)})")
+                print("==================================")
+                
+                try:
+                    news_tool = NewsFetcherTool()
+                    news_snippet = news_tool.scrape(
+                        news_url
+                    )
+                    
+                    router_message = {
+                        "agent_message": "",
+                        "CTAs": [],
+                        "tool_calls": [
+                            {
+                                "tool_name": "NewsFetcherTool",
+                                "args": news_url
+                            }
+                        ],
+                        "tasks": "",
+                        "routing_skipped": True,
+                        "note": "Routing stage was skipped for this specialized endpoint. Proceeding directly to response formatting."
+                    }
+                    
+                    message_history.append(AIMessage(content=json.dumps(router_message, indent=2)))
+                    
+                    # Add tool result as an AI message
+                    tool_message = {
+                        "tool_name": "NewsFetcherTool",
+                        "result": news_snippet,
+                        "note": "News fetcher tool executed successfully"
+                    }
+                    message_history.append(AIMessage(content=json.dumps(tool_message, indent=2)))
+                    
+                except Exception as e:
+                    print(f"Error executing news fetcher tool: {e}")
+                    error_message = {
+                        "tool_name": "NewsFetcherTool",
+                        "error": str(e),
+                        "note": "News fetcher tool failed to execute"
+                    }
+                    message_history.append(AIMessage(content=json.dumps(error_message, indent=2)))
             
         else:
             # Normal routing flow

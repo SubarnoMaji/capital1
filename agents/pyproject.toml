@@ -20,7 +20,8 @@ dependencies = [
     "python-dotenv (>=1.1.1,<2.0.0)",
     "gradio-client (>=1.11.1,<2.0.0)",
     "gradio (>=5.42.0,<6.0.0)",
-    "openai (>=1.99.9,<2.0.0)"
+    "openai (>=1.99.9,<2.0.0)",
+    "trafilatura (>=2.0.0,<3.0.0)"
 ]
 
 [tool.poetry]

@@ -42,6 +42,7 @@ class CuratorState(TypedDict):
     query: str  # Current user query passed explicitly
     image_url: Optional[str]
     policy_details: Optional[Dict[str, Any]]
+    news_url: Optional[str]
 
 class CuratorNode:
     """
@@ -142,22 +143,26 @@ class CuratorNode:
         # Validate and ensure correct data types
         image_url = state.get("image_url")
         policy_details = state.get("policy_details")
+        news_url = state.get("news_url")
         
         # Log the actual types for debugging
         print(f"CuratorNode: Debug - image_url type: {type(image_url)}, value: {image_url}")
         print(f"CuratorNode: Debug - policy_details type: {type(policy_details)}, value: {policy_details}")
+        print(f"CuratorNode: Debug - news_url type: {type(news_url)}, value: {news_url}")
         
         internal_state = {
             "message_to_curator": {
                 "query": query,
                 "conversation_id": state["conversation_id"],
                 "image_url": image_url,
-                "policy_details": policy_details
+                "policy_details": policy_details,
+                "news_url": news_url
             },
             "message_history": state["messages"],
             "user_inputs": state["user_inputs"],
             "image_url": image_url,
-            "policy_details": policy_details
+            "policy_details": policy_details,
+            "news_url": news_url
         }
 
         # Process with router - pass the skip_routing flag and determine usecase type
@@ -170,6 +175,10 @@ class CuratorNode:
             # Check for policy fetcher tool
             if hasattr(tool, "name") and tool.name == "PolicyFetcherTool" and state.get("policy_details"):
                 usecase_type = "policy"
+                break
+            # Check for news summarizer tool
+            if hasattr(tool, "name") and tool.name == "NewsFetcherTool" and state.get("news_url"):
+                usecase_type = "news"
                 break
         
         updated_state = await self.query_router.process_state(
@@ -422,7 +431,7 @@ class CuratorNode:
                 return message
         return None
     
-    async def __call__(self, query: str, conversation_id: str, inputs: Dict[str, Any], image_url: Optional[str] = None, policy_details: Optional[Dict[str, Any]] = None) -> Dict:
+    async def __call__(self, query: str, conversation_id: str, inputs: Dict[str, Any], image_url: Optional[str] = None, policy_details: Optional[Dict[str, Any]] = None, news_url: Optional[str] = None) -> Dict:
         """
         Main execution flow for the CuratorNode using LangGraph.
 
@@ -454,7 +463,8 @@ class CuratorNode:
             },
             query=query,
             image_url=image_url,
-            policy_details=policy_details
+            policy_details=policy_details,
+            news_url=news_url
         )
 
         # Execute the workflow

@@ -8,7 +8,7 @@ import sys
 
 # Add the parent directory (project root) to the Python path
 sys.path.append(
-    os.path.abspath(os.path.join(os.path.dirname(__file__), "../../"))
+    os.path.abspath(os.path.join(os.path.dirname(__file__), "../../../.."))
 )
 
 from config import Config as config
@@ -99,7 +99,7 @@ class WebSearchTool(BaseTool):
             results.append({
                 "Title": item.get("title", ""),
                 "Link": item.get("url", ""),
-                "Snippet": item.get("content", "")[:200] + "..." if len(item.get("content", "")) > 200 else item.get("content", ""),
+                "Snippet": item.get("content", ""),
                 "Favicon": item.get("favicon", ""),
                 "Content": item.get("raw_content", ""),
                 "Success": True

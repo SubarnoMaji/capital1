@@ -23,6 +23,7 @@ from agents.curator.utils.tools.price_fetcher import PriceFetcherTool
 from agents.curator.utils.tools.weather_tool import WeatherAnalysisTool
 from agents.curator.utils.tools.pest_detection import PestDetectionTool
 from agents.curator.utils.tools.policy_fetcher import PolicyFetcherTool
+from agents.curator.utils.tools.news_tool import NewsFetcherTool
 
 router = APIRouter(prefix="/api/agent")
 
@@ -33,7 +34,8 @@ class CuratorRequest(BaseModel):
     inputs: Optional[Dict] = Field(None, description="User inputs for the query")
     image_url: Optional[str] = Field(None, description="Image URL for pest detection")
     policy_details: Optional[Dict] = Field(None, description="Policy details for policy detection")
-
+    news_url: Optional[str] = Field(None, description="News URL for news summarizer")
+    
 class CuratorResponse(BaseModel):
     user_inputs: Dict[str, Any] = Field(..., description="User inputs extracted from the query")
     agent_message: str = Field(..., description="Agent's response message")
@@ -103,6 +105,25 @@ def get_policy_detection_curator():
     curator = CuratorNode(model, tools, skip_routing=True)
     
     return curator
+
+def get_news_summarizer_curator():
+    """
+    Dependency to get the CuratorNode instance for news summarizer.
+    """
+    # Initialize the model
+    model = ChatOpenAI(model="gpt-5-mini", temperature=0.3)
+    
+    # Define tools - only essential ones for news summarizer
+    tools = [
+        NewsFetcherTool(),
+        UserDataLoggerTool(),
+        MessageHistoryLoggerTool()
+    ]
+
+    # Initialize the CuratorNode with skip_routing=True
+    curator = CuratorNode(model, tools, skip_routing=True)
+    
+    return curator
     
 @router.post("/curator", response_model=CuratorResponse)
 async def curate(
@@ -156,7 +177,7 @@ async def pest_detection(
         custom_query = f"Pest Detection Request: {request.query}. Please analyze this pest detection query and provide comprehensive advice."
         
         # Call the curator service with custom query
-        result = await curator(custom_query, request.conversation_id, request.inputs, request.image_url, None)
+        result = await curator(custom_query, request.conversation_id, request.inputs, request.image_url, None, None)
         
         # Return the result
         return CuratorResponse(
@@ -191,7 +212,7 @@ async def policy_detection(
         custom_query = f"Policy Detection Request: {request.query}. Please analyze this policy query and provide comprehensive recommendations."
         
         # Call the curator service with custom query
-        result = await curator(custom_query, request.conversation_id, request.inputs, None, request.policy_details)
+        result = await curator(custom_query, request.conversation_id, request.inputs, None, request.policy_details, None)
         
         # Return the result
         return CuratorResponse(
@@ -205,7 +226,35 @@ async def policy_detection(
         # Log the error and return a 500 error
         print(f"Error in policy detection service: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Error in policy detection service: {str(e)}")
-    
+
+@router.post("/news-summarizer", response_model=CuratorResponse | str)
+async def news_summarizer(
+    request: CuratorRequest,
+    curator: CuratorNode = Depends(get_news_summarizer_curator)
+):
+    """
+    Endpoint for news summarizer inference using curator.
+    """
+    try:
+        # Create a custom query for news summarizer
+        custom_query = f"News Summarizer Request: {request.query}. Please analyze this news snippet and provide a comprehensive summary."
+        
+        # Call the curator service with custom query
+        result = await curator(custom_query, request.conversation_id, request.inputs, None, None, request.news_url)
+        
+        # Return the result
+        return CuratorResponse(
+            user_inputs=result.get("user_inputs", {}),
+            agent_message=result.get("agent_message", ""),
+            CTAs=result.get("CTAs", []),
+            tasks=result.get("tasks", "")
+        )
+        
+    except Exception as e:
+        # Log the error and return a 500 error
+        print(f"Error in news summarizer service: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error in news summarizer service: {str(e)}")
+
 @router.get("/health")
 async def health_check():
     """
