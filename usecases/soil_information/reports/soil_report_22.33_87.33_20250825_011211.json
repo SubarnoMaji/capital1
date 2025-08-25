@@ -1,0 +1,67 @@
+{
+  "analysis_timestamp": "2025-08-25T01:12:11.358927",
+  "location": {
+    "latitude": 22.33,
+    "longitude": 87.33,
+    "climate_zone": "Tropical",
+    "depth": "0-5cm"
+  },
+  "soil_properties": {
+    "ph": 6.5,
+    "organic_carbon": 23.5,
+    "nitrogen": 1.51,
+    "phosphorus": 20,
+    "potassium": 5,
+    "clay_content": 27.1,
+    "sand_content": 34.8,
+    "silt_content": 38.0,
+    "bulk_density": 1.31,
+    "cation_exchange_capacity": 16.6
+  },
+  "soil_classification": {
+    "class_name": "Fluvisols",
+    "class_value": 11,
+    "probabilities": [
+      [
+        "Fluvisols",
+        21
+      ],
+      [
+        "Acrisols",
+        16
+      ],
+      [
+        "Vertisols",
+        13
+      ],
+      [
+        "Gleysols",
+        12
+      ],
+      [
+        "Luvisols",
+        10
+      ]
+    ],
+    "coordinates": [
+      87.33,
+      22.33
+    ],
+    "query_time": 1.3505804538726807
+  },
+  "soil_texture": "Clay Loam",
+  "soil_health_score": 89.5,
+  "raw_soil_data": {
+    "bdod": 131,
+    "cec": 166,
+    "clay": 271,
+    "nitrogen": 151,
+    "phh2o": 65,
+    "sand": 348,
+    "silt": 380,
+    "soc": 235,
+    "phosporus": null,
+    "potassium": null
+  },
+  "ai_recommendations_summary": "Below is a practical, farmer-friendly interpretation of your soil report and clear recommendations you can act on. I also note one important technical point up front: the Organic Carbon (23.5%) and Total N (1.51%) values are extremely high for a mineral topsoil sample (unusually fertile). Please see the short note under SOIL HEALTH about re-checking sampling/methods.\n\n## 1. SOIL HEALTH\n- Overall rating: Good \u2192 Excellent (with a caveat)\n  - Why: pH 6.5 is ideal for most crops, texture is clay loa..."
+}
