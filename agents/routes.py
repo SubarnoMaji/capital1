@@ -48,7 +48,7 @@ def get_curator():
     Dependency to get the CuratorNode instance.
     """
     # Initialize the model
-    model = ChatOpenAI(model="gpt-5-mini", temperature=0.3)
+    model = ChatOpenAI(model="gpt-4o", temperature=0.3)
     
     # Define tools
     tools = [
@@ -72,7 +72,7 @@ def get_pest_detection_curator():
     This curator skips routing and only uses response formatter.
     """
     # Initialize the model
-    model = ChatOpenAI(model="gpt-5-mini", temperature=0.3)
+    model = ChatOpenAI(model="gpt-4o", temperature=0.3)
     
     # Define tools - only essential ones for pest detection
     tools = [
@@ -111,7 +111,7 @@ def get_news_summarizer_curator():
     Dependency to get the CuratorNode instance for news summarizer.
     """
     # Initialize the model
-    model = ChatOpenAI(model="gpt-5-mini", temperature=0.3)
+    model = ChatOpenAI(model="gpt-4o", temperature=0.3)
     
     # Define tools - only essential ones for news summarizer
     tools = [
