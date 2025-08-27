@@ -44,7 +44,7 @@ class PestDetectionTool(BaseTool):
         # Initialize the LLM
         self.llm = ChatOpenAI(
             api_key = config.OPENAI_API_KEY,
-            model = "gpt-5-mini", 
+            model = "gpt-4o", 
         )
         
         # Pest class mapping from the provided classes.txt

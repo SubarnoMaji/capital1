@@ -17,7 +17,7 @@ from config import Config as config
 class OpenAIClient:
     def __init__(self):
         self.client = AsyncOpenAI(api_key=getattr(config, "OPENAI_API_KEY", None))
-        self.model = "gpt-5-mini"  # Cost-effective model
+        self.model = "gpt-4o"  # Cost-effective model
     
     async def analyze_policies(self, prompt: str) -> Dict[str, Any]:
         """

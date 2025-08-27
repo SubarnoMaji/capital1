@@ -92,7 +92,7 @@ def get_policy_detection_curator():
     This curator skips routing and only uses response formatter.
     """
     # Initialize the model
-    model = ChatOpenAI(model="gpt-5-mini", temperature=0.3)
+    model = ChatOpenAI(model="gpt-4o", temperature=0.3)
     
     # Define tools - only essential ones for policy detection
     tools = [
